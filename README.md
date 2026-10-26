@@ -1,0 +1,80 @@
+# 🌹 DateFlow Auto-Pipeline (MoneyPrinterTurbo)
+
+**0-click, 4 Reels/day → Instagram @dataflow_planner** — профессиональное качество.
+
+Использует [MoneyPrinterTurbo v1.3.9](https://github.com/harry0703/MoneyPrinterTurbo) для продакшена: Hormozi word-by-word субтитры, Ken Burns зум, fade-in переходы, Pexels б-ролл.
+
+## Расписание публикаций
+
+Каждый день **4 Reels** автоматически генерируются утром и ставятся в очередь:
+
+| Время TRT | Почему это время |
+|:-:|---|
+| **11:00** | Обеденный скролл (перерыв на работе) |
+| **15:00** | Послеобеденный провал внимания |
+| **18:15** | Прайм-тайм после работы (дорога домой) |
+| **21:30** | Вечерний скролл перед сном (пик вовлечённости) |
+
+GitHub Actions запускается в **10:00 TRT (07:00 UTC)** и готовит все 4 видео на этот же день. Если какой-то слот уже прошёл — он переносится на следующий день.
+
+## Как работает
+
+Каждый запуск (один раз в сутки):
+
+1. **DeepSeek AI** генерирует 4 РАЗНЫХ вирусных dating-сценария (проверка на уникальность). Если AI не ответил — используется пул из 8+ готовых скриптов.
+2. **MoneyPrinterTurbo** для каждого видео:
+   - Edge TTS нейросетевой голос en-US-GuyNeural (+10% скорость)
+   - Pexels вертикальный б-ролл под поисковые термины из скрипта
+   - 1080×1920 Full HD с fade-in переходами
+   - Word-by-word pop-spring анимация субтитров (жирный Anton шрифт, 3.5px чёрная обводка)
+   - Ken Burns зум на каждом клипе
+3. Загрузка MP4 → uguu.se (Buffer сразу выкачивает и перехостит у себя)
+4. **Buffer CLI** планирует каждый Reel на свой слот (11:00/15:00/18:15/21:30)
+5. В Telegram приходит 4 подтверждения с MP4 + итоговая сводка
+6. В указанное время Buffer сам публикует в Instagram — **0 кликов**
+
+## Установка (5 минут один раз)
+
+### 1. Создать приватный GitHub репозиторий
+https://github.com/new → `dateflow-pipeline`, Private → Create.
+
+### 2. Загрузить файлы
+"uploading an existing file" → перетащите все файлы из `dateflow-pipeline.zip`.
+
+### 3. Добавить 7 секретов
+Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | Значение |
+|---|---|
+| `OPENAI_API_KEY` | `sk-3e4cb9080fea4d2b9c872aea51cc2ec4` |
+| `PEXELS_API_KEY` | `eaYdwAVy9MeKRY0okZClhbND6hkwAyXHcds0aXXn4ITCamkdGc4nkpdb` |
+| `BUFFER_API_KEY` | `HTR09W8Ubn_r5n6a9wDaYDPFCysHlqEIdYOORVzvtKJ` |
+| `BUFFER_ORG_ID` | `6ad678fa27469e130f893e13` |
+| `BUFFER_CHANNEL_ID` | `6adc7b9b778b240e2fac6af1` |
+| `TELEGRAM_BOT_TOKEN` | `8795932131:AAGvoGY6DuROOSe4hxE_71rofDOvu4iDJJ0` |
+| `ADMIN_CHAT_ID` | `7210384965` |
+
+### 4. (Опционально) Изменить количество постов в день
+Settings → Secrets and variables → Actions → Variables → New repository variable:
+- `NUM_POSTS` = `3` (например, если хотите 3 вместо 4)
+
+Или отредактируйте `POST_TIMES` в начале `pipeline.py` — добавьте/удалите слоты времени.
+
+### 5. Включить Actions
+Actions → "I understand my workflows, enable them" → Run workflow.
+
+## Кастомизация (опционально)
+
+| Что менять | Где в `pipeline.py` |
+|---|---|
+| Время публикаций | `POST_TIMES = ["11:00","15:00","18:15","21:30"]` |
+| Количество видео в день | `NUM_POSTS` env var или константа |
+| Стиль субтитров (размер/шрифт/цвета) | Аргументы CLI в функции `render_mpt()` |
+| BGM | `--bgm-type random` вместо `none` в `render_mpt()` |
+| Длительность клипов | `--video-clip-duration 2.8` (меньше = быстрее монтаж) |
+| Новые темы/хуки | Список `topics` в `gen_script_deepseek()` или `SCRIPTS_POOL` |
+
+## Важно по лимитам Buffer
+- Бесплатный тариф Buffer = **10 запланированных постов в очереди** максимум
+- При 4 постах/день очередь должна быть пуста утром, чтобы хватило места (старые посты удаляются автоматически после публикации)
+- Если будет ошибка "posting limits" — просто подождите, пока опубликуются стоящие в очереди
