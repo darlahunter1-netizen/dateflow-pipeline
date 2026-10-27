@@ -32,20 +32,60 @@ TRT = timezone(timedelta(hours=3), name="TRT")
 def trt_now():
     return datetime.now(UTC).astimezone(TRT)
 
+def get_scheduled_times():
+    """Получить список datetime (UTC) уже запланированных постов в Buffer,
+    чтобы избежать дубликатов."""
+    times = set()
+    try:
+        if not (BUFFER_KEY and ORG_ID):
+            return times
+        env = os.environ.copy(); env["BUFFER_API_KEY"] = BUFFER_KEY
+        r = subprocess.run(
+            ["buffer", "posts", "list",
+             "--organization-id", ORG_ID,
+             "--limit", "50"],
+            capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode != 0:
+            return times
+        data = json.loads(r.stdout)
+        items = data.get("items", []) or data.get("data", {}).get("posts", {}).get("posts", [])
+        for p in items:
+            if p.get("status") == "scheduled":
+                due = p.get("dueAt")
+                if due:
+                    try:
+                        # dueAt в ISO UTC формате
+                        dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
+                        times.add(dt.astimezone(UTC))
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"  ⚠️ Could not fetch existing scheduled posts: {e}")
+    return times
+
 def next_free_slots(count):
-    """Вернуть список datetime (timezone-aware, в TRT) для следующих count постов."""
+    """Вернуть список datetime (timezone-aware, в TRT) для следующих count постов,
+    пропуская слоты которые уже заняты (избегаем дубликатов)."""
     now = trt_now()
+    existing_utc = get_scheduled_times()
+    print(f"  📋 Existing scheduled posts in Buffer: {len(existing_utc)}")
     slots = []
     day = now.date()
     while len(slots) < count:
         for hhmm in POST_TIMES:
             h, m = map(int, hhmm.split(":"))
-            # Локальное TRT время
             t_local = datetime(day.year, day.month, day.day, h, m, tzinfo=TRT)
-            if t_local > now + timedelta(minutes=10):
-                slots.append(t_local)
-                if len(slots) >= count:
-                    return slots
+            if t_local <= now + timedelta(minutes=10):
+                continue
+            # Проверяем не занят ли этот слот (±45 минут от него)
+            t_utc = t_local.astimezone(UTC)
+            occupied = any(abs((t - t_utc).total_seconds()) < 2700 for t in existing_utc)
+            if occupied:
+                print(f"  ⏭ Slot {t_local.strftime('%a %H:%M')} already scheduled — skipping")
+                continue
+            slots.append(t_local)
+            if len(slots) >= count:
+                return slots
         day += timedelta(days=1)
     return slots
 
