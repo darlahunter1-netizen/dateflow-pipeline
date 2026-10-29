@@ -171,6 +171,22 @@ def pick_script(avoid_hooks=()):
 
 
 # ── 3. Upload to public host (Buffer fetches from URL) ──────────────────────
+# Litterbox (catbox.moe temp) — хранит файлы 72 часа, прямая video/mp4 ссылка,
+# поддерживает HTTP Range запросы (Buffer требует это).
+def upload_litterbox(path, expiry="72h"):
+    with open(path, "rb") as f:
+        r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
+                          data={"reqtype":"fileupload","time":expiry},
+                          files={"fileToUpload":(path.name,f,"video/mp4")},
+                          headers={"User-Agent":"Mozilla/5.0"},
+                          timeout=240)
+    url = r.text.strip()
+    assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {url[:200]}"
+    # Sanity check HEAD
+    h = requests.head(url, timeout=15, allow_redirects=True)
+    assert h.headers.get("content-type","").startswith("video/"), f"content-type: {h.headers.get('content-type')}"
+    return url
+
 def upload_uguu(path):
     with open(path,"rb") as f:
         r = requests.post("https://uguu.se/upload",
@@ -183,19 +199,15 @@ def upload_uguu(path):
         assert url.startswith("http")
         return url
 
-def upload_tmpfiles(path):
-    with open(path,"rb") as f:
-        r = requests.post("https://tmpfiles.org/api/v1/upload",
-                          files={"file":(path.name,f,"video/mp4")}, timeout=240)
-    r.raise_for_status()
-    return r.json()["data"]["url"].replace("https://tmpfiles.org/","https://tmpfiles.org/dl/")
-
 def upload_video(path):
-    for fn in (upload_uguu, upload_tmpfiles):
+    """Try litterbox first (stable, 3 days, Buffer-friendly), uguu as fallback."""
+    for name, fn in (("litterbox", upload_litterbox), ("uguu", upload_uguu)):
         try:
-            url = fn(path); print(f"  Upload URL: {url}"); return url
+            url = fn(path)
+            print(f"  Upload URL ({name}): {url}")
+            return url
         except Exception as e:
-            print(f"  uploader failed: {e}")
+            print(f"  {name} failed: {e}")
     raise RuntimeError("All uploaders failed")
 
 
