@@ -171,9 +171,58 @@ def pick_script(avoid_hooks=()):
 
 
 # ── 3. Upload to public host (Buffer fetches from URL) ──────────────────────
-# Litterbox (catbox.moe temp) — хранит файлы 72 часа, прямая video/mp4 ссылка,
-# поддерживает HTTP Range запросы (Buffer требует это).
+def upload_github_release(path):
+    """Загрузить MP4 как asset к GitHub Release.
+    Требует env GITHUB_TOKEN и GITHUB_REPOSITORY (автоматически в Actions).
+    Возвращает прямую ссылку на скачивание (живёт вечно)."""
+    gh_token = os.environ.get("GITHUB_TOKEN")
+    gh_repo = os.environ.get("GITHUB_REPOSITORY")  # e.g. "user/dateflow-pipeline"
+    if not gh_token or not gh_repo:
+        raise RuntimeError("GITHUB_TOKEN or GITHUB_REPOSITORY not set (not in GitHub Actions?)")
+    headers = {"Authorization": f"token {gh_token}",
+               "Accept": "application/vnd.github+json",
+               "User-Agent": "DateFlow-Pipeline"}
+    api = f"https://api.github.com/repos/{gh_repo}"
+    tag = "dateflow-media"
+    # 1. Get or create release
+    r = requests.get(f"{api}/releases/tags/{tag}", headers=headers, timeout=30)
+    if r.status_code == 404:
+        r = requests.post(f"{api}/releases", headers=headers, timeout=30,
+                          json={"tag_name": tag, "name": "DateFlow Reels Media",
+                                "body": "Auto-generated Reels assets", "draft": False})
+        r.raise_for_status()
+    elif r.status_code != 200:
+        r.raise_for_status()
+    release = r.json()
+    upload_url = release["upload_url"].replace("{?name,label}", "")
+    asset_name = path.name
+    # 2. Upload asset
+    with open(path, "rb") as f:
+        r2 = requests.post(f"{upload_url}?name={asset_name}",
+                           headers={**headers, "Content-Type": "video/mp4"},
+                           data=f, timeout=300)
+    if r2.status_code not in (201, 200):
+        # If asset already exists (duplicate name), delete old one first
+        if r2.status_code == 422:
+            for a in release.get("assets", []):
+                if a["name"] == asset_name:
+                    requests.delete(f"{api}/releases/assets/{a['id']}", headers=headers, timeout=15)
+                    with open(path, "rb") as f:
+                        r2 = requests.post(f"{upload_url}?name={asset_name}",
+                                           headers={**headers, "Content-Type": "video/mp4"},
+                                           data=f, timeout=300)
+                    break
+        r2.raise_for_status()
+    asset = r2.json()
+    url = asset["browser_download_url"]
+    # Verify HEAD
+    h = requests.head(url, timeout=20, allow_redirects=True)
+    if h.status_code != 200:
+        raise RuntimeError(f"GitHub asset not accessible: {h.status_code}")
+    return url
+
 def upload_litterbox(path, expiry="72h"):
+    """Fallback для локального запуска (когда нет GitHub Actions)."""
     with open(path, "rb") as f:
         r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
                           data={"reqtype":"fileupload","time":expiry},
@@ -182,32 +231,23 @@ def upload_litterbox(path, expiry="72h"):
                           timeout=240)
     url = r.text.strip()
     assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {url[:200]}"
-    # Sanity check HEAD
-    h = requests.head(url, timeout=15, allow_redirects=True)
-    assert h.headers.get("content-type","").startswith("video/"), f"content-type: {h.headers.get('content-type')}"
     return url
 
-def upload_uguu(path):
-    with open(path,"rb") as f:
-        r = requests.post("https://uguu.se/upload",
-                          files={"files[]":(path.name,f,"video/mp4")}, timeout=240)
-    r.raise_for_status()
-    try:
-        return r.json()["files"][0]["url"]
-    except Exception:
-        url = r.text.strip().split()[0]
-        assert url.startswith("http")
-        return url
-
 def upload_video(path):
-    """Try litterbox first (stable, 3 days, Buffer-friendly), uguu as fallback."""
-    for name, fn in (("litterbox", upload_litterbox), ("uguu", upload_uguu)):
+    """GitHub Release (вечно) если мы в Actions, иначе litterbox (3 дня)."""
+    if os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"):
         try:
-            url = fn(path)
-            print(f"  Upload URL ({name}): {url}")
+            url = upload_github_release(path)
+            print(f"  Upload URL (github): {url}")
             return url
         except Exception as e:
-            print(f"  {name} failed: {e}")
+            print(f"  github upload failed: {e}, falling back to litterbox")
+    try:
+        url = upload_litterbox(path)
+        print(f"  Upload URL (litterbox): {url}")
+        return url
+    except Exception as e:
+        print(f"  litterbox failed: {e}")
     raise RuntimeError("All uploaders failed")
 
 
