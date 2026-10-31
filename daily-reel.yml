@@ -1,10 +1,11 @@
 name: DateFlow Daily Reels (MPT-powered, 4 posts/day)
 on:
   schedule:
-    # 07:00 UTC = 10:00 TRT — планирует все 4 слота на этот же день
-    # (11:00, 15:00, 18:15, 21:30 TRT). Если пропустили — добирает на следующий.
     - cron: '0 7 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-publish:
@@ -35,8 +36,7 @@ jobs:
             "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
 
       - name: Install pipeline deps
-        run: |
-          pip install requests openai --quiet
+        run: pip install requests openai --quiet
 
       - name: Setup Buffer CLI config
         env:
@@ -55,6 +55,8 @@ jobs:
           BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
           MPT_DIR: ${{ github.workspace }}/../mpt
           NUM_POSTS: ${{ vars.NUM_POSTS || '4' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: python pipeline.py
 
       - name: Upload Reel artifacts (debug)
@@ -63,4 +65,4 @@ jobs:
         with:
           name: daily-reels
           path: output/
-          retention-days: 7
+          retention-days: 14
