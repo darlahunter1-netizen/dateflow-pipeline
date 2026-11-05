@@ -400,7 +400,7 @@ def render_mpt(script, terms):
         "--video-aspect", "9:16",
         "--video-source", "pexels",
         "--voice-name", "en-US-GuyNeural",
-        "--voice-rate", "+10%",
+        "--voice-rate", "1.1",
         "--subtitle-display-mode", "word_by_word",
         "--subtitle-animation", "pop_spring",
         "--video-transition-mode", "fade-in",
