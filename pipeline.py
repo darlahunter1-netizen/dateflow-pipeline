@@ -221,34 +221,86 @@ def upload_github_release(path):
         raise RuntimeError(f"GitHub asset not accessible: {h.status_code}")
     return url
 
+def upload_uguu(path):
+    """uguu.se — хранит файлы долго (~120 дней), прямая ссылка, полный файл без сжатия."""
+    with open(path,"rb") as f:
+        r = requests.post("https://uguu.se/upload",
+                          files={"files[]":(path.name,f,"video/mp4")},
+                          headers={"User-Agent":"Mozilla/5.0"},
+                          timeout=300)
+    r.raise_for_status()
+    data = r.json()
+    assert data.get("success"), f"uguu bad response: {data}"
+    url = data["files"][0]["url"]
+    assert url.startswith("http"), f"uguu url bad: {url[:300]}"
+    # Verify size matches (no compression)
+    expected = path.stat().st_size
+    h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
+    got = int(h.headers.get("content-length", 0))
+    assert h.status_code == 200 and abs(got - expected) < expected * 0.05, \
+        f"uguu size mismatch: expected {expected}, got {got}"
+    return url
+
+def upload_imgur(path):
+    """Imgur анонимная загрузка — CDN, живёт вечно (но может пережимать короткие видео)."""
+    with open(path, "rb") as f:
+        r = requests.post("https://api.imgur.com/3/upload",
+                          headers={"Authorization": "Client-ID 546c25a59c58ad7"},
+                          data={"type":"file","title":"DateFlow Reel"},
+                          files={"video":(path.name,f,"video/mp4")},
+                          timeout=300)
+    r.raise_for_status()
+    data = r.json()
+    assert data.get("success"), f"imgur upload failed: {data}"
+    url = data["data"]["link"]
+    assert url.endswith(".mp4"), f"not mp4: {url}"
+    return url
+
 def upload_litterbox(path, expiry="72h"):
-    """Fallback для локального запуска (когда нет GitHub Actions)."""
+    """litterbox.catbox.moe — 3 дня."""
     with open(path, "rb") as f:
         r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
                           data={"reqtype":"fileupload","time":expiry},
                           files={"fileToUpload":(path.name,f,"video/mp4")},
-                          headers={"User-Agent":"Mozilla/5.0"},
-                          timeout=240)
+                          headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                   "Origin":"https://litterbox.catbox.moe",
+                                   "Referer":"https://litterbox.catbox.moe/"},
+                          timeout=300)
     url = r.text.strip()
-    assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {url[:200]}"
+    assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {r.status_code} → {url[:300]}"
+    h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
+    assert h.status_code == 200, f"litterbox HEAD: {h.status_code}"
     return url
 
-def upload_video(path):
-    """GitHub Release (вечно) если мы в Actions, иначе litterbox (3 дня)."""
-    if os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"):
+def _upload_with_retries(fn, path, tries=3, delay=8):
+    last_err = None
+    for i in range(tries):
         try:
-            url = upload_github_release(path)
-            print(f"  Upload URL (github): {url}")
+            return fn(path)
+        except Exception as e:
+            last_err = e
+            print(f"    attempt {i+1}/{tries} failed: {str(e)[:200]}")
+            if i < tries - 1:
+                time.sleep(delay)
+    raise last_err
+
+def upload_video(path):
+    """Порядок хостов: uguu (полный файл, долго живёт) → GitHub Release → imgur → litterbox."""
+    attempts = [("uguu", upload_uguu)]
+    if os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"):
+        attempts.append(("github", upload_github_release))
+    attempts.append(("imgur", upload_imgur))
+    attempts.append(("litterbox", upload_litterbox))
+    last_err = None
+    for name, fn in attempts:
+        try:
+            url = _upload_with_retries(fn, path, tries=3, delay=8)
+            print(f"  ✅ Upload ({name}): {url}")
             return url
         except Exception as e:
-            print(f"  github upload failed: {e}, falling back to litterbox")
-    try:
-        url = upload_litterbox(path)
-        print(f"  Upload URL (litterbox): {url}")
-        return url
-    except Exception as e:
-        print(f"  litterbox failed: {e}")
-    raise RuntimeError("All uploaders failed")
+            last_err = e
+            print(f"  ❌ {name} failed after retries: {str(e)[:200]}")
+    raise RuntimeError(f"All uploaders failed. Last error: {last_err}")
 
 
 # ── 4. Render via MoneyPrinterTurbo CLI ─────────────────────────────────────
