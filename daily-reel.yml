@@ -32,8 +32,7 @@ jobs:
           cd mpt
           pip install -r requirements.txt --quiet
           mkdir -p resource/fonts
-          curl -sL -o resource/fonts/Anton-Regular.ttf \
-            "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
+          curl -sL -o resource/fonts/Anton-Regular.ttf "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
 
       - name: Install pipeline deps
         run: pip install requests openai --quiet
