@@ -65,18 +65,27 @@ def get_scheduled_times():
 
 def next_free_slots(count):
     """Вернуть список datetime (timezone-aware, в TRT) для следующих count постов,
-    пропуская слоты которые уже заняты (избегаем дубликатов)."""
+    пропуская слоты которые уже заняты (избегаем дубликатов).
+    Берём СЛЕДУЮЩИЙ свободный слот — не более 2 часов вперёд при запуске перед публикацией,
+    либо любое количество при утреннем батчевом запуске."""
     now = trt_now()
     existing_utc = get_scheduled_times()
     print(f"  📋 Existing scheduled posts in Buffer: {len(existing_utc)}")
+    # Если запустились за 25 минут до слота — берём ближайший слот (в пределах 45 минут),
+    # иначе берём N ближайших свободных слотов.
+    lookahead_hours = 2 if count == 1 else 48
     slots = []
     day = now.date()
+    cutoff = now + timedelta(hours=lookahead_hours)
     while len(slots) < count:
         for hhmm in POST_TIMES:
             h, m = map(int, hhmm.split(":"))
             t_local = datetime(day.year, day.month, day.day, h, m, tzinfo=TRT)
             if t_local <= now + timedelta(minutes=10):
                 continue
+            if t_local - now > timedelta(hours=lookahead_hours) and slots:
+                # уже нашли ближайший, дальше не идём
+                return slots
             # Проверяем не занят ли этот слот (±45 минут от него)
             t_utc = t_local.astimezone(UTC)
             occupied = any(abs((t - t_utc).total_seconds()) < 2700 for t in existing_utc)
@@ -87,6 +96,8 @@ def next_free_slots(count):
             if len(slots) >= count:
                 return slots
         day += timedelta(days=1)
+        if day > (now + timedelta(days=5)).date():
+            break
     return slots
 
 OPENAI_KEY   = os.getenv("OPENAI_API_KEY", "")
