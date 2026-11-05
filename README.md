@@ -44,6 +44,16 @@ https://github.com/new → `dateflow-pipeline`, Private → Create.
 ### 3. Добавить 7 секретов
 Settings → Secrets and variables → Actions → New repository secret:
 
+| Secret | Значение |
+|---|---|
+| `OPENAI_API_KEY` | `sk-3e4cb9080fea4d2b9c872aea51cc2ec4` |
+| `PEXELS_API_KEY` | `eaYdwAVy9MeKRY0okZClhbND6hkwAyXHcds0aXXn4ITCamkdGc4nkpdb` |
+| `BUFFER_API_KEY` | `HTR09W8Ubn_r5n6a9wDaYDPFCysHlqEIdYOORVzvtKJ` |
+| `BUFFER_ORG_ID` | `6ad678fa27469e130f893e13` |
+| `BUFFER_CHANNEL_ID` | `6adc7b9b778b240e2fac6af1` |
+| `TELEGRAM_BOT_TOKEN` | `8795932131:AAGvoGY6DuROOSe4hxE_71rofDOvu4iDJJ0` |
+| `ADMIN_CHAT_ID` | `7210384965` |
+
 ### 4. (Опционально) Изменить количество постов в день
 Settings → Secrets and variables → Actions → Variables → New repository variable:
 - `NUM_POSTS` = `3` (например, если хотите 3 вместо 4)
