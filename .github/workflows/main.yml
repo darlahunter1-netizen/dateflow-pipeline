@@ -1,11 +1,11 @@
-name: DateFlow Reels
+name: DateFlow Reels (just-in-time)
 on:
   schedule:
-    - cron: '35 8 * * *'    # 11:00 TRT
-    - cron: '35 12 * * *'   # 15:00 TRT
-    - cron: '50 15 * * *'   # 18:15 TRT
-    - cron: '5 19 * * *'    # 21:30 TRT
-    - cron: '0 7 * * *'     # 10:00 утра — планирование вперёд
+    # За 25 минут до каждого слота (TRT = UTC+3):
+    - cron: '35 7 * * *'     # 10:35 TRT → публикует в 11:00
+    - cron: '35 11 * * *'    # 14:35 TRT → публикует в 15:00
+    - cron: '50 14 * * *'    # 17:50 TRT → публикует в 18:15
+    - cron: '5 18 * * *'     # 21:05 TRT → публикует в 21:30
   workflow_dispatch:
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
           BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
         run: bash setup_buffer.sh
 
-      - name: Generate & publish Reel(s)
+      - name: Generate & publish Reel
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
@@ -58,7 +58,7 @@ jobs:
           BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
           BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
           MPT_DIR: ${{ github.workspace }}/../mpt
-          NUM_POSTS: ${{ vars.NUM_POSTS || '1' }}
+          NUM_POSTS: '1'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python pipeline.py
@@ -69,4 +69,4 @@ jobs:
         with:
           name: daily-reel
           path: output/
-          retention-days: 7
+          retention-days: 3
