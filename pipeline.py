@@ -218,16 +218,32 @@ def upload_github_release(path):
                "User-Agent": "DateFlow-Pipeline"}
     api = f"https://api.github.com/repos/{gh_repo}"
     tag = "dateflow-media"
-    # 1. Get or create release
+    # 1. Get or create release (идемпотентно: создаём tag через refs если нужно, потом release)
     print(f"  📦 GitHub: checking release tag={tag} in {gh_repo}...")
     r = requests.get(f"{api}/releases/tags/{tag}", headers=headers, timeout=30)
     if r.status_code == 404:
+        # Создаём lightweight tag на текущем HEAD
+        sha = os.environ.get("GITHUB_SHA")
+        print(f"  📦 GitHub: release not found, creating tag {tag} on {sha[:8] if sha else 'HEAD'}...")
+        if sha:
+            rt = requests.post(f"{api}/git/refs", headers=headers, timeout=20,
+                               json={"ref": f"refs/tags/{tag}", "sha": sha})
+            if rt.status_code == 422:
+                # Тег уже существует — норм
+                pass
+            elif rt.status_code not in (200, 201):
+                print(f"  ⚠ Could not create tag: {rt.status_code} → {rt.text[:200]}")
         print(f"  📦 GitHub: creating new release...")
         r = requests.post(f"{api}/releases", headers=headers, timeout=30,
                           json={"tag_name": tag, "name": "DateFlow Reels Media",
-                                "body": "Auto-generated Reels assets", "draft": False})
+                                "body": "Auto-generated Reels assets", "draft": False,
+                                "prerelease": False, "target_commitish": "main"})
         if r.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub create release failed: {r.status_code} → {r.text[:300]}")
+            # Иногда тег создаётся релизом сам — пробуем ещё раз получить
+            time.sleep(3)
+            r = requests.get(f"{api}/releases/tags/{tag}", headers=headers, timeout=30)
+            if r.status_code != 200:
+                raise RuntimeError(f"GitHub create release failed: {r.status_code} → {r.text[:300]}")
     elif r.status_code != 200:
         raise RuntimeError(f"GitHub get release failed: {r.status_code} → {r.text[:300]}")
     release = r.json()
@@ -256,6 +272,30 @@ def upload_github_release(path):
             raise RuntimeError(f"GitHub upload failed: {r2.status_code} → {r2.text[:500]}")
     asset = r2.json()
     url = asset["browser_download_url"]
+    asset_id = asset.get("id")
+    # GitHub CDN может раздавать 404 первые до 60 секунд после загрузки — ждём
+    print(f"  📦 GitHub: asset uploaded (id={asset_id}), waiting for CDN to propagate...")
+    total_wait = 0
+    for wait_sec in (3, 5, 7, 10, 10, 15, 15):
+        time.sleep(wait_sec)
+        total_wait += wait_sec
+        h = requests.head(url, timeout=20, allow_redirects=True, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "video/mp4,application/octet-stream,*/*"})
+        size = int(h.headers.get("content-length", 0))
+        ctype = h.headers.get("content-type", "")
+        print(f"    waited {total_wait}s → status={h.status_code}, type={ctype}, size={size/1024/1024:.1f}MB")
+        if h.status_code == 200 and size > 1024*1024:
+            print(f"  ✅ GitHub asset is live: {url}")
+            break
+    else:
+        # Попробуем GET с Range (иногда HEAD не работает пока файл не полностью пропагационен)
+        r_test = requests.get(url, timeout=30, stream=True,
+                              headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-1023"})
+        if r_test.status_code in (200, 206):
+            print(f"  ✅ GitHub asset is live (GET check passed): {url}")
+            return url
+        raise RuntimeError(f"GitHub asset not accessible after {total_wait}s: {h.status_code}")
     return url
 
 def upload_uguu(path):
@@ -279,17 +319,24 @@ def upload_uguu(path):
     return url
 
 def upload_imgur(path):
-    """Imgur анонимная загрузка — CDN, живёт вечно (но может пережимать короткие видео)."""
+    """Imgur анонимная загрузка — CDN. Видео лимит на Imgur до 1GB для анонимных."""
     with open(path, "rb") as f:
         r = requests.post("https://api.imgur.com/3/upload",
                           headers={"Authorization": "Client-ID 546c25a59c58ad7"},
-                          data={"type":"file","title":"DateFlow Reel"},
+                          data={"type":"file","title":"DateFlow Reel","name":path.name},
                           files={"video":(path.name,f,"video/mp4")},
                           timeout=300)
-    r.raise_for_status()
+    if r.status_code != 200:
+        raise RuntimeError(f"imgur status {r.status_code}: {r.text[:300]}")
     data = r.json()
-    assert data.get("success"), f"imgur upload failed: {data}"
+    if not data.get("success"):
+        raise RuntimeError(f"imgur upload failed: {data}")
     url = data["data"]["link"]
+    if not url.endswith(".mp4"):
+        # Попробуем получить mp4-версию
+        mp4_url = data["data"].get("mp4")
+        if mp4_url:
+            url = mp4_url
     assert url.endswith(".mp4"), f"not mp4: {url}"
     return url
 
