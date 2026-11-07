@@ -33,8 +33,7 @@ def trt_now():
     return datetime.now(UTC).astimezone(TRT)
 
 def get_scheduled_times():
-    """Получить список datetime (UTC) уже запланированных постов в Buffer,
-    чтобы избежать дубликатов."""
+    """Получить UTC времена уже запланированных постов в Buffer. Пробуем несколько форматов ответа."""
     times = set()
     try:
         if not (BUFFER_KEY and ORG_ID):
@@ -43,61 +42,84 @@ def get_scheduled_times():
         r = subprocess.run(
             ["buffer", "posts", "list",
              "--organization-id", ORG_ID,
-             "--limit", "50"],
+             "--limit", "100"],
             capture_output=True, text=True, timeout=30, env=env)
         if r.returncode != 0:
+            print(f"  ⚠️ buffer posts list stderr: {r.stderr[:300]}")
             return times
-        data = json.loads(r.stdout)
-        items = data.get("items", []) or data.get("data", {}).get("posts", {}).get("posts", [])
+        try:
+            data = json.loads(r.stdout)
+        except Exception:
+            print(f"  ⚠ buffer posts list not JSON: {r.stdout[:300]}")
+            return times
+        # Пробуем разные форматы ответа
+        items = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = (data.get("items") or
+                     data.get("data", {}).get("posts", []) or
+                     data.get("posts", []) or
+                     data.get("data", []))
+            if isinstance(data.get("data"), dict):
+                items = items or data["data"].get("items", [])
+        print(f"  🔍 Buffer returned {len(items)} posts total")
         for p in items:
-            if p.get("status") == "scheduled":
-                due = p.get("dueAt")
-                if due:
-                    try:
-                        # dueAt в ISO UTC формате
-                        dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
-                        times.add(dt.astimezone(UTC))
-                    except Exception:
-                        pass
+            # Считаем и scheduled, и sending/error как существующие (чтобы не дублировать битые)
+            status = p.get("status", "")
+            due = p.get("dueAt") or p.get("scheduled_at") or p.get("due_at") or p.get("scheduledAt")
+            if due and status in ("scheduled", "sending", "pending", "error", "failed"):
+                try:
+                    dt = datetime.fromisoformat(str(due).replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
+                    times.add(dt.astimezone(UTC))
+                except Exception:
+                    pass
     except Exception as e:
         print(f"  ⚠️ Could not fetch existing scheduled posts: {e}")
     return times
 
 def next_free_slots(count):
-    """Вернуть список datetime (timezone-aware, в TRT) для следующих count постов,
-    пропуская слоты которые уже заняты (избегаем дубликатов).
-    Берём СЛЕДУЮЩИЙ свободный слот — не более 2 часов вперёд при запуске перед публикацией,
-    либо любое количество при утреннем батчевом запуске."""
+    """Вернуть N слотов. При count=1 (расписание) — ТОЛЬКО слот в окне 5..45 минут от сейчас
+    (just-in-time: ровно один запуск на свой слот). Ручной запуск (workflow_dispatch)
+    берёт N ближайших свободных слотов в пределах 24 часов."""
     now = trt_now()
     existing_utc = get_scheduled_times()
     print(f"  📋 Existing scheduled posts in Buffer: {len(existing_utc)}")
-    # Если запустились за 25 минут до слота — берём ближайший слот (в пределах 45 минут),
-    # иначе берём N ближайших свободных слотов.
-    lookahead_hours = 2 if count == 1 else 48
+    is_manual = os.environ.get("DATEFLOW_MANUAL", "") == "1" or count > 1
     slots = []
     day = now.date()
-    cutoff = now + timedelta(hours=lookahead_hours)
+    max_days = 3 if is_manual else 1
     while len(slots) < count:
         for hhmm in POST_TIMES:
             h, m = map(int, hhmm.split(":"))
             t_local = datetime(day.year, day.month, day.day, h, m, tzinfo=TRT)
-            if t_local <= now + timedelta(minutes=10):
+            delta = t_local - now
+            if delta < timedelta(minutes=-10):
                 continue
-            if t_local - now > timedelta(hours=lookahead_hours) and slots:
-                # уже нашли ближайший, дальше не идём
-                return slots
-            # Проверяем не занят ли этот слот (±45 минут от него)
+            if is_manual:
+                # Ручной запуск — берём любые свободные слоты в будущем
+                pass
+            else:
+                # Автоматический по расписанию: ТОЛЬКО слот на 15-35 минут вперёд
+                if delta < timedelta(minutes=15) or delta > timedelta(minutes=40):
+                    continue
+            # Проверяем не занят ли (±45 минут)
             t_utc = t_local.astimezone(UTC)
             occupied = any(abs((t - t_utc).total_seconds()) < 2700 for t in existing_utc)
             if occupied:
-                print(f"  ⏭ Slot {t_local.strftime('%a %H:%M')} already scheduled — skipping")
+                print(f"  ⏭ Slot {t_local.strftime('%a %H:%M')} (delta={delta}) already scheduled — skipping")
                 continue
+            print(f"  ✅ Picking slot {t_local.strftime('%a %H:%M')} (in {delta})")
             slots.append(t_local)
             if len(slots) >= count:
                 return slots
         day += timedelta(days=1)
-        if day > (now + timedelta(days=5)).date():
+        if day > (now + timedelta(days=max_days)).date():
             break
+    if not slots and not is_manual:
+        print(f"  ⚠ No just-in-time slot found now (current time: {now.strftime('%H:%M')}, delta must be 15-40 min). Exiting.")
     return slots
 
 OPENAI_KEY   = os.getenv("OPENAI_API_KEY", "")
@@ -183,57 +205,58 @@ def pick_script(avoid_hooks=()):
 
 # ── 3. Upload to public host (Buffer fetches from URL) ──────────────────────
 def upload_github_release(path):
-    """Загрузить MP4 как asset к GitHub Release.
-    Требует env GITHUB_TOKEN и GITHUB_REPOSITORY (автоматически в Actions).
-    Возвращает прямую ссылку на скачивание (живёт вечно)."""
+    """Загрузить MP4 как asset к GitHub Release (живёт вечно)."""
     gh_token = os.environ.get("GITHUB_TOKEN")
-    gh_repo = os.environ.get("GITHUB_REPOSITORY")  # e.g. "user/dateflow-pipeline"
+    gh_repo = os.environ.get("GITHUB_REPOSITORY")
     if not gh_token or not gh_repo:
-        raise RuntimeError("GITHUB_TOKEN or GITHUB_REPOSITORY not set (not in GitHub Actions?)")
+        raise RuntimeError("GITHUB_TOKEN or GITHUB_REPOSITORY not set")
     headers = {"Authorization": f"token {gh_token}",
                "Accept": "application/vnd.github+json",
                "User-Agent": "DateFlow-Pipeline"}
     api = f"https://api.github.com/repos/{gh_repo}"
     tag = "dateflow-media"
     # 1. Get or create release
+    print(f"  📦 GitHub: checking release tag={tag} in {gh_repo}...")
     r = requests.get(f"{api}/releases/tags/{tag}", headers=headers, timeout=30)
     if r.status_code == 404:
+        print(f"  📦 GitHub: creating new release...")
         r = requests.post(f"{api}/releases", headers=headers, timeout=30,
                           json={"tag_name": tag, "name": "DateFlow Reels Media",
                                 "body": "Auto-generated Reels assets", "draft": False})
-        r.raise_for_status()
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"GitHub create release failed: {r.status_code} → {r.text[:300]}")
     elif r.status_code != 200:
-        r.raise_for_status()
+        raise RuntimeError(f"GitHub get release failed: {r.status_code} → {r.text[:300]}")
     release = r.json()
     upload_url = release["upload_url"].replace("{?name,label}", "")
     asset_name = path.name
+    print(f"  📦 GitHub: uploading {asset_name} ({path.stat().st_size/1024/1024:.1f}MB)...")
     # 2. Upload asset
     with open(path, "rb") as f:
         r2 = requests.post(f"{upload_url}?name={asset_name}",
-                           headers={**headers, "Content-Type": "video/mp4"},
-                           data=f, timeout=300)
+                           headers={**headers, "Content-Type": "application/octet-stream"},
+                           data=f, timeout=600)
     if r2.status_code not in (201, 200):
-        # If asset already exists (duplicate name), delete old one first
+        # If asset already exists (duplicate name), delete old one first then retry
         if r2.status_code == 422:
-            for a in release.get("assets", []):
+            print(f"  📦 GitHub: asset exists, deleting old one and retrying...")
+            rel_id = release["id"]
+            rl = requests.get(f"{api}/releases/{rel_id}/assets", headers=headers, timeout=30)
+            for a in rl.json():
                 if a["name"] == asset_name:
-                    requests.delete(f"{api}/releases/assets/{a['id']}", headers=headers, timeout=15)
-                    with open(path, "rb") as f:
-                        r2 = requests.post(f"{upload_url}?name={asset_name}",
-                                           headers={**headers, "Content-Type": "video/mp4"},
-                                           data=f, timeout=300)
-                    break
-        r2.raise_for_status()
+                    requests.delete(f"{api}/releases/assets/{a['id']}", headers=headers, timeout=30)
+            with open(path, "rb") as f:
+                r2 = requests.post(f"{upload_url}?name={asset_name}",
+                                   headers={**headers, "Content-Type": "application/octet-stream"},
+                                   data=f, timeout=600)
+        if r2.status_code not in (200, 201):
+            raise RuntimeError(f"GitHub upload failed: {r2.status_code} → {r2.text[:500]}")
     asset = r2.json()
     url = asset["browser_download_url"]
-    # Verify HEAD
-    h = requests.head(url, timeout=20, allow_redirects=True)
-    if h.status_code != 200:
-        raise RuntimeError(f"GitHub asset not accessible: {h.status_code}")
     return url
 
 def upload_uguu(path):
-    """uguu.se — хранит файлы долго (~120 дней), прямая ссылка, полный файл без сжатия."""
+    """uguu.se — хранит файлы ТОЛЬКО 3 часа! Используется как запасной вариант."""
     with open(path,"rb") as f:
         r = requests.post("https://uguu.se/upload",
                           files={"files[]":(path.name,f,"video/mp4")},
@@ -244,7 +267,7 @@ def upload_uguu(path):
     assert data.get("success"), f"uguu bad response: {data}"
     url = data["files"][0]["url"]
     assert url.startswith("http"), f"uguu url bad: {url[:300]}"
-    # Verify size matches (no compression)
+    # Проверяем размер сразу
     expected = path.stat().st_size
     h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
     got = int(h.headers.get("content-length", 0))
@@ -296,21 +319,34 @@ def _upload_with_retries(fn, path, tries=3, delay=8):
     raise last_err
 
 def upload_video(path):
-    """Порядок хостов: uguu (полный файл, долго живёт) → GitHub Release → imgur → litterbox."""
-    attempts = [("uguu", upload_uguu)]
+    """Порядок хостов: GitHub Release (ВЕЧНОЕ хранилище, прямой MP4) → imgur (CDN, вечное).
+    uguu и litterbox исключены — они удаляют файлы через 3 часа/3 дня и Buffer не успевает скачать."""
+    attempts = []
     if os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"):
         attempts.append(("github", upload_github_release))
+    else:
+        print("  ⚠ GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping GitHub upload")
     attempts.append(("imgur", upload_imgur))
-    attempts.append(("litterbox", upload_litterbox))
     last_err = None
     for name, fn in attempts:
         try:
             url = _upload_with_retries(fn, path, tries=3, delay=8)
+            # Дополнительно проверяем что ссылка реально отдаёт 200 + правильный размер
+            expected = path.stat().st_size
+            h = requests.head(url, timeout=30, allow_redirects=True,
+                              headers={"User-Agent": "Mozilla/5.0 (compatible; Buffer/1.0)"})
+            got = int(h.headers.get("content-length", 0))
+            ctype = h.headers.get("content-type", "")
+            print(f"  🔍 Verify: status={h.status_code}, content-type={ctype}, size={got/1024/1024:.1f}MB (expected {expected/1024/1024:.1f}MB)")
+            if h.status_code != 200 or ("video" not in ctype and "octet" not in ctype and "mp4" not in ctype):
+                raise RuntimeError(f"URL verification failed: status={h.status_code} type={ctype}")
+            if abs(got - expected) > expected * 0.15:
+                print(f"  ⚠ Size mismatch for {name} — continuing anyway (may be compressed)")
             print(f"  ✅ Upload ({name}): {url}")
             return url
         except Exception as e:
             last_err = e
-            print(f"  ❌ {name} failed after retries: {str(e)[:200]}")
+            print(f"  ❌ {name} failed after retries: {str(e)[:400]}")
     raise RuntimeError(f"All uploaders failed. Last error: {last_err}")
 
 
