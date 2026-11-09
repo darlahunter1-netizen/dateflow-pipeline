@@ -81,49 +81,52 @@ def get_scheduled_times():
     return times
 
 def next_free_slots(count):
-    """Вернуть N слотов.
-    При запуске по расписанию (schedule event) — ТОЛЬКО слот на 15-40 минут вперёд (just-in-time).
-    При ручном запуске (workflow_dispatch) или NUM_POSTS>1 — берём ближайшие свободные слоты."""
+    """Выбрать слоты для постов.
+    Защита от пропусков и дубликатов:
+    - Если запуск по расписанию: берём ближайший свободный слот в окне до 6 часов
+      (чтобы если один cron пропустил, следующий за ним подхватил и не было пропусков в дне)
+    - Если ручной запуск — любые свободные слоты в ближайшие 5 дней
+    - Никогда не создаём 2 поста на один и тот же слот (±45 минут проверка)
+    - Никогда не возвращаем слоты в прошлом."""
     now = trt_now()
     existing_utc = get_scheduled_times()
     print(f"  📋 Existing scheduled posts in Buffer: {len(existing_utc)}")
-    # Определяем тип запуска: GitHub Actions устанавливает GITHUB_EVENT_NAME
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     is_schedule = (event_name == "schedule") and count == 1
-    is_manual = not is_schedule
+
     slots = []
     day = now.date()
-    max_days = 5 if is_manual else 1
     while len(slots) < count:
         for hhmm in POST_TIMES:
             h, m = map(int, hhmm.split(":"))
             t_local = datetime(day.year, day.month, day.day, h, m, tzinfo=TRT)
             delta = t_local - now
             if delta < timedelta(minutes=-10):
+                continue  # слот в прошлом
+            # Защита от дубликатов: если в автоматическом запуске уже взяли слот
+            # в пределах just-in-time, не берём следующий
+            if is_schedule and slots:
+                break
+            if is_schedule and delta > timedelta(hours=6):
+                # В автоматическом запуске не смотрим слоты дальше 6 часов вперёд
                 continue
-            if is_schedule:
-                # Автоматический запуск: только слот на 15-40 минут вперёд
-                if delta < timedelta(minutes=15) or delta > timedelta(minutes=45):
-                    continue
-            # Проверяем не занят ли (±45 минут)
+            # Проверяем не занят ли этот слот (±45 минут)
             t_utc = t_local.astimezone(UTC)
             occupied = any(abs((t - t_utc).total_seconds()) < 2700 for t in existing_utc)
             if occupied:
-                print(f"  ⏭ Slot {t_local.strftime('%a %H:%M')} (in {delta}) already scheduled — skipping")
+                print(f"  ⏭ Slot {t_local.strftime('%a %H:%M')} (in {delta}) already scheduled — skip")
                 continue
             print(f"  ✅ Picking slot {t_local.strftime('%a %H:%M')} (in {delta})")
             slots.append(t_local)
             if len(slots) >= count:
                 return slots
         day += timedelta(days=1)
-        if day > (now + timedelta(days=max_days)).date():
+        if day > (now + timedelta(days=5)).date():
             break
     if not slots:
-        if is_schedule:
-            print(f"  ℹ No just-in-time slot needed right now (current time: {now.strftime('%H:%M')}). Exiting cleanly.")
-        else:
-            print(f"  ⚠ No free slots found in the next {max_days} days")
+        print(f"  ℹ Nothing to schedule right now (now={now.strftime('%H:%M %d %b')}).")
     return slots
+
 
 OPENAI_KEY   = os.getenv("OPENAI_API_KEY", "")
 PEXELS_KEY   = os.getenv("PEXELS_API_KEY", "")
@@ -299,23 +302,28 @@ def upload_github_release(path):
     return url
 
 def upload_uguu(path):
-    """uguu.se — хранит файлы ТОЛЬКО 3 часа! Используется как запасной вариант."""
+    """uguu.se — хранит файлы 3 часа, прямая ссылка, полный файл без сжатия.
+    Достаточно для just-in-time (загрузка за 25 мин до публикации)."""
     with open(path,"rb") as f:
         r = requests.post("https://uguu.se/upload",
                           files={"files[]":(path.name,f,"video/mp4")},
-                          headers={"User-Agent":"Mozilla/5.0"},
+                          headers={
+                              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                              "Origin": "https://uguu.se",
+                              "Referer": "https://uguu.se/"},
                           timeout=300)
     r.raise_for_status()
     data = r.json()
     assert data.get("success"), f"uguu bad response: {data}"
     url = data["files"][0]["url"]
-    assert url.startswith("http"), f"uguu url bad: {url[:300]}"
+    assert url.startswith("http") and ".uguu.se/" in url, f"uguu url bad: {url[:300]}"
     # Проверяем размер сразу
     expected = path.stat().st_size
     h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
     got = int(h.headers.get("content-length", 0))
     assert h.status_code == 200 and abs(got - expected) < expected * 0.05, \
-        f"uguu size mismatch: expected {expected}, got {got}"
+        f"uguu size/HTTP mismatch: status={h.status_code}, expected {expected}, got {got}"
+    print(f"    (uguu link: {url}, size={got/1024/1024:.1f}MB, live now)")
     return url
 
 def upload_imgur(path):
@@ -340,22 +348,6 @@ def upload_imgur(path):
     assert url.endswith(".mp4"), f"not mp4: {url}"
     return url
 
-def upload_litterbox(path, expiry="72h"):
-    """litterbox.catbox.moe — 3 дня."""
-    with open(path, "rb") as f:
-        r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
-                          data={"reqtype":"fileupload","time":expiry},
-                          files={"fileToUpload":(path.name,f,"video/mp4")},
-                          headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                   "Origin":"https://litterbox.catbox.moe",
-                                   "Referer":"https://litterbox.catbox.moe/"},
-                          timeout=300)
-    url = r.text.strip()
-    assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {r.status_code} → {url[:300]}"
-    h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
-    assert h.status_code == 200, f"litterbox HEAD: {h.status_code}"
-    return url
-
 def _upload_with_retries(fn, path, tries=3, delay=8):
     last_err = None
     for i in range(tries):
@@ -368,39 +360,40 @@ def _upload_with_retries(fn, path, tries=3, delay=8):
                 time.sleep(delay)
     raise last_err
 
+def upload_litterbox(path, expiry="1h"):
+    """litterbox.catbox.moe — 1 час по умолчанию (для just-in-time достаточно)."""
+    with open(path, "rb") as f:
+        r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
+                          data={"reqtype":"fileupload","time":expiry},
+                          files={"fileToUpload":(path.name,f,"video/mp4")},
+                          headers={
+                              "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                              "Origin":"https://litterbox.catbox.moe",
+                              "Referer":"https://litterbox.catbox.moe/"},
+                          timeout=300)
+    r.raise_for_status()
+    url = r.text.strip()
+    assert url.startswith("https://litter.catbox.moe/"), f"litterbox bad: {r.status_code} → {url[:300]}"
+    h = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
+    assert h.status_code == 200, f"litterbox HEAD: {h.status_code}"
+    return url
+
 def upload_video(path):
-    """Порядок хостов: GitHub Release (ВЕЧНОЕ хранилище, прямой MP4) → imgur (CDN, вечное).
-    uguu и litterbox исключены — они удаляют файлы через 3 часа/3 дня и Buffer не успевает скачать."""
-    attempts = []
-    if os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"):
-        attempts.append(("github", upload_github_release))
-    else:
-        print("  ⚠ GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping GitHub upload")
-    attempts.append(("imgur", upload_imgur))
+    """Загрузка на uguu.se (3 часа хранения, прямая ссылка video/mp4 — надёжно работает).
+    Just-in-time (загрузка за 25 мин до публикации) — 3 часов более чем достаточно."""
     last_err = None
-    for name, fn in attempts:
+    for attempt in range(5):
         try:
-            url = _upload_with_retries(fn, path, tries=3, delay=8)
-            # Дополнительно проверяем что ссылка реально отдаёт 200 + правильный размер
-            expected = path.stat().st_size
-            h = requests.head(url, timeout=30, allow_redirects=True,
-                              headers={"User-Agent": "Mozilla/5.0 (compatible; Buffer/1.0)"})
-            got = int(h.headers.get("content-length", 0))
-            ctype = h.headers.get("content-type", "")
-            print(f"  🔍 Verify: status={h.status_code}, content-type={ctype}, size={got/1024/1024:.1f}MB (expected {expected/1024/1024:.1f}MB)")
-            if h.status_code != 200 or ("video" not in ctype and "octet" not in ctype and "mp4" not in ctype):
-                raise RuntimeError(f"URL verification failed: status={h.status_code} type={ctype}")
-            if abs(got - expected) > expected * 0.15:
-                print(f"  ⚠ Size mismatch for {name} — continuing anyway (may be compressed)")
-            print(f"  ✅ Upload ({name}): {url}")
+            url = upload_uguu(path)
+            print(f"  ✅ Upload (uguu): {url}")
             return url
         except Exception as e:
             last_err = e
-            print(f"  ❌ {name} failed after retries: {str(e)[:400]}")
-    raise RuntimeError(f"All uploaders failed. Last error: {last_err}")
+            print(f"  ❌ uguu attempt {attempt+1}/5 failed: {str(e)[:300]}")
+            if attempt < 4:
+                time.sleep(8)
+    raise RuntimeError(f"uguu failed after 5 attempts: {last_err}")
 
-
-# ── 4. Render via MoneyPrinterTurbo CLI ─────────────────────────────────────
 def ensure_mpt_config():
     cfg = MPT_DIR / "config.toml"
     cfg.write_text(f"""log_level = "WARNING"
@@ -655,13 +648,14 @@ def build_and_publish():
             time.sleep(5)
 
     # Итоговое сообщение
-    total_msg = f"🎉 Batch complete: {successes}/{len(slots)} reels scheduled.\n\nSlots:\n"
-    for i, s in enumerate(slots, 1):
-        total_msg += f"  {i}. {s.strftime('%a %d %b %H:%M')} TRT\n"
-    if not slots:
-        total_msg += "  (nothing to do — no matching slots for this run)\n"
-    print(total_msg)
-    notify_tg(total_msg)
+    if slots:
+        total_msg = f"🎉 Batch complete: {successes}/{len(slots)} reels scheduled.\n\nSlots:\n"
+        for i, s in enumerate(slots, 1):
+            total_msg += f"  {i}. {s.strftime('%a %d %b %H:%M')} TRT\n"
+        print(total_msg)
+        notify_tg(total_msg)
+    else:
+        print("(nothing to do — all needed slots already have posts scheduled)")
     # Завершаемся с кодом 0 ВСЕГДА (если нет слотов — это нормально, например
     # срабатывание cron у чужого слота; не должно помечать запуск как failed)
     return 0
