@@ -1,9 +1,14 @@
 name: DateFlow Reels (just-in-time)
 on:
   schedule:
+    # За 25 минут до каждого слота (TRT = UTC+3):
+    # 11:00 TRT = 08:00 UTC → запуск 07:35
     - cron: '35 7 * * *'
+    # 15:00 TRT = 12:00 UTC → запуск 11:35
     - cron: '35 11 * * *'
+    # 18:15 TRT = 15:15 UTC → запуск 14:50
     - cron: '50 14 * * *'
+    # 21:30 TRT = 18:30 UTC → запуск 18:05
     - cron: '5 18 * * *'
   workflow_dispatch:
 
@@ -15,19 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install system deps
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q ffmpeg fonts-dejavu curl git
           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
           sudo apt-get install -y nodejs
           sudo npm install -g @bufferapp/cli
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Clone & install MoneyPrinterTurbo
         run: |
           cd $GITHUB_WORKSPACE/..
@@ -37,16 +39,13 @@ jobs:
           pip install edge-tts --quiet
           mkdir -p resource/fonts
           curl -sL -o resource/fonts/Anton-Regular.ttf "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
-
       - name: Install pipeline deps
         run: pip install requests openai edge-tts --quiet
-
       - name: Setup Buffer CLI config
         env:
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
           BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
         run: bash setup_buffer.sh
-
       - name: Generate & publish Reel
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -61,11 +60,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python pipeline.py
-
-      - name: Upload Reel artifacts (debug)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: daily-reel
+          name: reel
           path: output/
           retention-days: 3
