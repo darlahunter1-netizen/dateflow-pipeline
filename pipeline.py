@@ -101,8 +101,8 @@ def next_free_slots(count):
             h, m = map(int, hhmm.split(":"))
             t_local = datetime(day.year, day.month, day.day, h, m, tzinfo=TRT)
             delta = t_local - now
-            if delta < timedelta(minutes=-10):
-                continue  # слот в прошлом
+            if delta <= timedelta(0):
+                continue  # слот уже наступил или в прошлом
             # Защита от дубликатов: если в автоматическом запуске уже взяли слот
             # в пределах just-in-time, не берём следующий
             if is_schedule and slots:
@@ -133,8 +133,8 @@ PEXELS_KEY   = os.getenv("PEXELS_API_KEY", "")
 BUFFER_KEY   = os.getenv("BUFFER_API_KEY", "")
 CHANNEL_ID   = os.getenv("BUFFER_CHANNEL_ID", "6adc7b9b778b240e2fac6af1")
 ORG_ID       = os.getenv("BUFFER_ORG_ID", "6ad678fa27469e130f893e13")
-TG_TOKEN     = os.getenv("TELEGRAM_BOT_TOKEN", "8795932131:AAGvoGY6DuROOSe4hxE_71rofDOvu4iDJJ0")
-ADMIN_CHAT   = os.getenv("ADMIN_CHAT_ID", "7210384965")
+TG_TOKEN     = os.getenv("TELEGRAM_BOT_TOKEN", "")
+ADMIN_CHAT   = os.getenv("ADMIN_CHAT_ID", "")
 
 # Viral fallback pool (used when DeepSeek is down)
 SCRIPTS_POOL = [
@@ -379,20 +379,12 @@ def upload_litterbox(path, expiry="1h"):
     return url
 
 def upload_video(path):
-    """Загрузка на uguu.se (3 часа хранения, прямая ссылка video/mp4 — надёжно работает).
-    Just-in-time (загрузка за 25 мин до публикации) — 3 часов более чем достаточно."""
-    last_err = None
-    for attempt in range(5):
-        try:
-            url = upload_uguu(path)
-            print(f"  ✅ Upload (uguu): {url}")
-            return url
-        except Exception as e:
-            last_err = e
-            print(f"  ❌ uguu attempt {attempt+1}/5 failed: {str(e)[:300]}")
-            if attempt < 4:
-                time.sleep(8)
-    raise RuntimeError(f"uguu failed after 5 attempts: {last_err}")
+    """Загрузить видео в публичный GitHub Release.
+    Репозиторий должен быть публичным: Buffer скачивает asset по browser_download_url.
+    Временные хостинги здесь намеренно не используются.
+    """
+    print("  📤 Primary media host: GitHub Releases")
+    return _upload_with_retries(upload_github_release, path, tries=3, delay=15)
 
 def ensure_mpt_config():
     cfg = MPT_DIR / "config.toml"
@@ -631,6 +623,10 @@ def build_one(idx, total, publish_time, used_hooks):
 
 
 def build_and_publish():
+    print(f"🕒 event={os.environ.get('GITHUB_EVENT_NAME', 'unknown')} | "
+          f"run={os.environ.get('GITHUB_RUN_ID', 'local')} "
+          f"attempt={os.environ.get('GITHUB_RUN_ATTEMPT', '1')} | "
+          f"TRT now={trt_now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"🌹 DateFlow MPT Auto-Pilot starting — {NUM_POSTS} reel(s)")
     slots = next_free_slots(NUM_POSTS)
     print(f"📅 Scheduling posts at: {[s.strftime('%a %H:%M') for s in slots]}")
