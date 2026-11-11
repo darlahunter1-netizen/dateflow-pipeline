@@ -143,7 +143,7 @@ SCRIPTS_POOL = [
   {"hook":"Text this after a first date","body":"Don't overthink it. Say: I had fun, let's do this again. Two sentences. Leave her wanting more. Long paragraphs smell desperate.","cta":"Short. Confident. Direct.","terms":"woman texting phone smiling,man texting confident,romantic text message phone,couple goodnight text,phone screen dating app","kws":["text","after","first","date"]},
   {"hook":"Stop texting her every day","body":"It kills attraction faster than anything else. When you text all day you become predictable. Predictable is boring. Text once with a clear plan. Hey there's a new wine bar tomorrow 7pm. That's it.","cta":"Certainty is attractive. Neediness is not.","terms":"couple texting phone bored,woman ignoring phone,man confident dating,couple wine bar date,city night couple walking","kws":["every day","predictable","boring","plan"]},
   {"hook":"35 euro date that beats 200 euro dinner","body":"Sunset walk. Ice cream. One good cocktail. The best dates create moments not bills. Spending money doesn't create chemistry. Presence does.","cta":"We find the spots that feel expensive but aren't.","terms":"couple sunset walk beach,romantic ice cream date,couple cocktail bar night,sunset city view couple,cheap fun date ideas","kws":["35","200","moments","presence"]},
-  {"hook":"Stop asking for permission","body":"Don't say can I kiss you. Don't say is it okay if I hold your hand. Read the room. Act. Confidence is reading the moment and going for it.","terms":"couple romantic first kiss,confident man holding hands woman,first kiss moment,couple romantic moment evening,close up couple eyes","kws":["permission","confidence","act","moment"]},
+  {"hook":"Confidence is asking, not guessing","body":"If the moment feels right, ask warmly. A clear yes builds trust; a no deserves respect. Confidence means making the other person feel safe, not guessing or pressuring them.","cta":"Good dates start with mutual respect.","terms":"couple having respectful conversation,first date smiling couple,romantic couple talking,comfortable couple walking,kind communication date","kws":["confidence","asking","yes","respect"]},
   {"hook":"The worst first date move","body":"Checking your phone every two minutes. It screams I'd rather be somewhere else. Put it away. Eye contact. Listen. That alone puts you in top ten percent.","cta":"Presence is the rarest quality on a date.","terms":"man checking phone date rude,woman upset phone date,man listening woman eye contact,couple deep conversation,date night phone distraction","kws":["phone","eye contact","listen","presence"]},
   {"hook":"Date spots that always work","body":"Rooftop with a view. Speakeasy bar. Bookstore coffee. River walk at sunset. Places that give you something to talk about beat the same restaurant every time.","cta":"We map these for every city you visit.","terms":"rooftop bar city view couple,speakeasy bar cocktail,bookstore coffee shop couple,river walk sunset couple,date location ideas","kws":["rooftop","speakeasy","sunset","map"]},
 ]
@@ -564,7 +564,10 @@ def build_one(idx, total, publish_time, used_hooks):
 
     # Pick script (avoid repeats within the batch)
     s = pick_script(avoid_hooks=list(used_hooks))
-    hook = s["hook"]; body = s["body"]; cta = s["cta"]
+    hook = s["hook"]
+    body = s["body"]
+    cta = s.get("cta") or "We plan the route. You just show up."
+    s["cta"] = cta  # normalize fallback/legacy scripts before rendering
     terms = s.get("terms","dating couple romantic date")
     used_hooks.add(hook)
     print(f"Hook: {hook}")
