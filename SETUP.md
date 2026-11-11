@@ -1,176 +1,237 @@
-# 🚀 DateFlow Pipeline — Полная инструкция по постоянной работе
+# DateFlow Pipeline - Setup and Operations
 
-## Где мы сейчас
-✅ Контент-пайплайн работает: 24 поста уже опубликовано в @dataflow_planner
-✅ Reels рендерятся автоматически через MoneyPrinterTurbo (качественно, word-by-word субтитры)
-✅ Buffer публикует в инстаграм в заданное время
-❌ Последняя проблема: хостинг видео (нужно обновить pipeline.py по инструкции ниже)
+This guide matches the current workflow. Production runs **only** in GitHub Actions.
+Do not run `pipeline.py` on Windows or on a local machine as the production path.
 
-## 🎯 Цель
-4 Reels в день автоматически без вашего участия. Рост до 100K подписчиков органически.
+## 1. Keep the repository public
 
----
+GitHub Release assets are only publicly downloadable from a public repository. The
+workflow uploads MP4s to a monthly release tag `dateflow-media-YYYY-MM`; Buffer must be able to reach
+the media URL without authentication. Do not make the repository private.
 
-## Шаг 1: Обновить pipeline.py (РЕШАЕТ ПРОБЛЕМУ С ЗАГРУЗКОЙ)
+## 2. Add GitHub Actions secrets
 
-Это самый важный шаг — исправляет ошибку "All uploaders failed".
+Go to **Settings -> Secrets and variables -> Actions -> Secrets -> New repository secret**.
+Add names only; never paste a value into a file, issue or chat.
 
-1. Откройте репозиторий: https://github.com/darlahunter1-netizen/dateflow-pipeline
-2. Нажмите на файл `pipeline.py`
-3. Справа сверху иконка ✏️ **Edit this file** (карандаш)
-4. Нажмите **Ctrl+A** чтобы выделить весь текст → **Delete**
-5. Откройте файл `pipeline.py` из этого архива (внутри zip), скопируйте всё и вставьте в редактор на GitHub
-6. Внизу страницы нажмите зелёную кнопку **Commit changes** → ещё раз **Commit changes**
+| Secret | Required | What it is |
+|---|---|---|
+| `PEXELS_API_KEY` | Production | Pexels API key used by MoneyPrinterTurbo for b-roll |
+| `GEMINI_API_KEY` | Optional | Free Gemini API key used for script generation; the fallback pool works without it |
+| `BUFFER_API_KEY` | Production | Buffer API key from <https://publish.buffer.com/settings/api> |
+| `BUFFER_ORG_ID` | Production | Buffer organization id |
+| `BUFFER_CHANNEL_ID` | Production | Buffer channel id for the Instagram account |
+| `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot token for one summary per production run |
+| `ADMIN_CHAT_ID` | Optional | Telegram chat that receives the summary |
 
-## Шаг 2: Обновить workflow файл
+`GITHUB_TOKEN` is created by Actions automatically. The workflow grants it
+`contents: write` so it can create release assets. If your organization blocks write
+tokens, change **Settings -> Actions -> General -> Workflow permissions** to allow read and
+write, or the release upload step will fail.
 
-1. В репозитории откройте папку `.github` → `workflows` → `daily-reel.yml`
-2. ✏️ Edit → Ctrl+A → Delete → вставьте текст:
+Optional **repository variable** (Settings -> Secrets and variables -> Actions -> Variables):
 
-```yaml
-name: DateFlow Daily Reels (MPT-powered, 4 posts/day)
-on:
-  schedule:
-    - cron: '0 7 * * *'
-  workflow_dispatch:
+| Variable | Purpose |
+|---|---|
+| `PUBLIC_MEDIA_BASE_URL` | Direct HTTPS prefix that serves the MP4 as `video/mp4` (GitHub Pages, public R2 bucket, etc.) |
+| `REPLACE_ERRORED_SLOTS` | `0` keeps failed Buffer posts (the slot is then blocked); default `1` deletes and retries them |
 
-permissions:
-  contents: write
+## 3. Read the Buffer ids without exposing them
 
-jobs:
-  build-and-publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+Run these read-only commands in a private terminal where `BUFFER_API_KEY` is already
+exported. Do not put the output in the repository.
 
-      - name: Install system deps
-        run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg fonts-dejavu curl git
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-          sudo npm install -g @bufferapp/cli
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Clone & install MoneyPrinterTurbo
-        run: |
-          cd $GITHUB_WORKSPACE/..
-          git clone --depth 1 https://github.com/harry0703/MoneyPrinterTurbo.git mpt
-          cd mpt
-          pip install -r requirements.txt --quiet
-          mkdir -p resource/fonts
-          curl -sL -o resource/fonts/Anton-Regular.ttf "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
-
-      - name: Install pipeline deps
-        run: pip install requests openai --quiet
-
-      - name: Setup Buffer CLI config
-        env:
-          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
-        run: bash setup_buffer.sh
-
-      - name: Generate & publish 4 Reels
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
-          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
-          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
-          MPT_DIR: ${{ github.workspace }}/../mpt
-          NUM_POSTS: ${{ vars.NUM_POSTS || '4' }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python pipeline.py
-
-      - name: Upload Reel artifacts (debug)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: daily-reels
-          path: output/
-          retention-days: 14
+```bash
+export BUFFER_API_KEY="..."   # private terminal only
+buffer account --output json
+buffer channels list --organization-id "<org-id>" --output json
 ```
 
-3. **Commit changes** → **Commit changes**
+Copy the organization id and the Instagram channel id directly into the two GitHub
+Actions secrets. Do not commit them, and do not paste them into an issue.
 
-## Шаг 3: Проверить права Actions
-1. **Settings** (вверху справа)
-2. В левом меню: **Actions** → **General**
-3. Пролистайте до раздела **Workflow permissions**
-4. Выберите ✅ **Read and write permissions**
-5. Нажмите **Save**
+The pipeline validates that the channel exists indirectly: if the id is wrong, Buffer
+returns an error and the run fails non-zero.
 
+## 4. Choose the media delivery path
 
-## Шаг 5: Отменить зависшие запуски
-1. Вкладка **Actions**
-2. Если есть запуск со статусом Queued (жёлтый кружок) и давностью больше часа — нажмите на него → кнопка **Cancel workflow** справа вверху
+The pipeline always uploads to the public monthly GitHub Release `dateflow-media-YYYY-MM`. That release is
+the durable archive and the default URL handed to Buffer.
 
-## Шаг 6: Очистить Buffer
-Откройте https://publish.buffer.com
-- Если в Queue или Approvals есть посты с ошибкой ❌ "Please update the media URL" — удалите их через ⋮ → Delete (это старые посты с мёртвыми ссылками, они всё равно не опубликуются)
-- Очередь должна быть пустой или только с новыми корректными постами
+GitHub serves release assets through a redirect with `Content-Type:
+application/octet-stream` and `Content-Disposition: attachment`. Buffer's documentation
+asks for a direct, stable URL and fetches media at publish time. If Buffer reports a media
+URL error, use a direct `video/mp4` prefix and set `PUBLIC_MEDIA_BASE_URL`:
 
-## Шаг 7: Тестовый запуск
-1. Вкладка **Actions** → слева нажмите "DateFlow Daily Reels (MPT-powered, 4 posts/day)"
-2. Справа кнопка **Run workflow** → выпадающее меню → ещё раз **Run workflow**
-3. Нажмите на появившийся жёлтый кружок → **build-and-publish** чтобы смотреть логи
-4. Подождите 20-30 минут. В логе будет видно:
-   - `🌹 DateFlow MPT Auto-Pilot starting — 4 reel(s)`
-   - Каждый Reel: `🎬 Reel 1/4 → ...` → `✅ MPT render complete` → `✅ Upload (uguu): https://...` → `✅ Reel #1 scheduled for ...`
-   - В конце: `🎉 Batch complete: 4/4 reels scheduled`
+### Option A - GitHub Pages
 
-5. Проверьте Telegram бота @DateFlow_Planner_bot — должны прийти 4 видео с подтверждениями
-6. Проверьте Buffer https://publish.buffer.com — в очереди должно быть 4 поста на 11:00, 15:00, 18:15, 21:30
+1. Create a small public Pages site in the same repository (or a dedicated media repo)
+   that publishes the rendered MP4 files under a stable path.
+2. Enable **Settings -> Pages** and deploy that site.
+3. Set `PUBLIC_MEDIA_BASE_URL` to the site prefix, for example
+   `https://<owner>.github.io/<repo>/media`.
+4. The pipeline verifies that
+   `https://<owner>.github.io/<repo>/media/reel_YYYY-MM-DD_HHMM.mp4` is a direct
+   `video/mp4` response before it gives the URL to Buffer.
 
----
+### Option B - Public Cloudflare R2 bucket
 
-## 📅 Как это работает дальше (постоянно)
+1. Create an R2 bucket and a public custom domain or public bucket URL.
+2. Upload the rendered MP4s there from your own deployment step, or configure your own
+   mirror to copy the release asset.
+3. Set `PUBLIC_MEDIA_BASE_URL` to the public prefix.
 
-- **Каждый день в 10:00 TRT (07:00 UTC)** GitHub Actions запускается автоматически по расписанию (`cron: '0 7 * * *'`)
-- Пайплайн смотрит какие слоты уже заняты в Buffer и создаёт НОВЫЕ видео только на свободные слоты (не дублирует)
-- 4 Reels автоматически генерируются и ставятся в очередь Buffer
-- Buffer сам публикует в Instagram в 11:00 / 15:00 / 18:15 / 21:30
-- В Telegram приходит сводка с 4 видео и статусом
+When the variable is set, the pipeline requires the URL to be direct (no redirect) and
+served as `video/mp4`. The pipeline does **not** deploy Pages or upload to R2 itself; it
+only verifies the URL, so you must mirror each rendered file to that prefix with your own
+step. When it is not set, the GitHub Release URL is used and a warning is
+logged. Temporary hosts, expiring links and signed URLs are not supported as the active
+path.
 
-## 📊 Проверка один раз в день
+## 5. Enable Actions
 
-Ничего делать не нужно, но если хотите контролировать:
-1. **В 10:10-10:30 утра** загляните в Telegram — должна прийти сводка "🎉 Batch complete: 4/4 reels scheduled"
-2. Если там "0/4" или ошибки — откройте лог Actions и посмотрите на какой step упало. Обычно само исправляется на следующий день.
-3. В Buffer https://publish.buffer.com в Queue должно быть 4 поста на сегодня (утром)
-4. Вечером можно посмотреть статистику в Instagram Insights
+1. Open the **Actions** tab and enable workflows if GitHub asks.
+2. Open **DateFlow Reels**.
+3. Check that the schedule shows the three cron entries:
+   * `10 20 * * *` (23:10 TRT) - primary batch for the next TRT day
+   * `10 2 * * *` (05:10 TRT) - recovery
+   * `10 8 * * *` (11:10 TRT) - later-slot recovery
 
-## ⚠️ Лимиты и что может сломаться
+The primary batch exists because GitHub can start scheduled jobs 5-8 hours late. It runs
+late in the TRT evening so that even a long delay still lands before 11:00 TRT. Recovery
+runs only fill slots that are still in the future. A slot that has already passed cannot
+be backfilled by a delayed run.
 
-| Проблема | Решение |
+GitHub also disables scheduled workflows in a public repository after **60 days without
+repository activity**. The separate `Keepalive` workflow commits one timestamp file on the
+first of each month to keep the schedule alive. If Actions shows a disabled workflow, open
+it and click **Enable workflow**.
+
+## 6. First test: dry-run
+
+1. **Actions -> DateFlow Reels -> Run workflow**.
+2. Leave `mode=dry_run` and `confirm` empty.
+3. Run it.
+
+A dry-run:
+
+* reads the Buffer queue if the Buffer secrets are configured (read-only),
+* writes one original script per free future slot,
+* validates the real `posts create` payload with `buffer posts create --dry-run`,
+* writes `output/dry_run_plan.json` as an artifact,
+* does **not** render, upload to a release, or create a Buffer post.
+
+If no future slot is free, it exits successfully and prints that there is nothing to do.
+
+## 7. First real catch-up
+
+Only after the dry-run looks correct:
+
+1. **Run workflow**.
+2. Select `mode=production`.
+3. Type `PUBLISH` in `confirm`.
+4. Optionally set `date` to a TRT date (`YYYY-MM-DD`) and `max_posts` to 1-4.
+
+Without `confirm=PUBLISH` the workflow stops before reading production secrets. Scheduled
+runs do not need the confirmation input because they are not manual.
+
+## 8. What a production run does
+
+For each free future slot:
+
+1. Generates or selects a script.
+2. Renders with MoneyPrinterTurbo v1.3.10 at 1080x1920 / 9:16.
+3. Runs `ffprobe` and rejects a wrong size, codec, missing audio or duration.
+4. Uploads to the public GitHub Release.
+5. Verifies the media URL and MP4 bytes.
+6. Validates the Buffer payload locally with `--dry-run`.
+7. Checks the slot again for occupancy.
+8. Creates the post with the official Buffer CLI.
+9. Reads the post back and requires status `scheduled` (or `buffer`).
+
+At the end it sends **one** Telegram summary if Telegram is configured. A run with no free
+slots sends nothing. A real failure sends one error summary and exits non-zero so the
+Actions run is red, not falsely green.
+
+## 9. Buffer free-plan limits
+
+* Up to **10 scheduled posts per channel at one time**.
+* Up to **1,000 API requests per channel per month** (3,000 with three channels).
+* Four posts per day fits; the pipeline caps the queue at 10 and skips slots when the
+  queue is full instead of crashing. Empty recovery runs make a single read-only call,
+  so a normal day stays around 20 requests.
+
+Buffer's `posts list` default fields do not include `dueAt`. The pipeline requests
+`items.{id,status,dueAt,channelId,text}` explicitly. Without that, every slot would look
+free and every run would create duplicates.
+
+If Buffer leaves a future post in `error` status, the pipeline deletes that broken post and
+re-creates the slot on the next run so the automation can recover. Set the repository
+variable `REPLACE_ERRORED_SLOTS=0` if you prefer to clean those posts by hand; the slot is
+then reported as blocked and the run fails loudly instead.
+
+## 10. Rotate exposed credentials
+
+The current files no longer contain values, but **earlier commits in this public
+repository did**. Removing a string from the current file does not remove it from Git
+history, forks, caches or search indexes. Rotate the credentials now:
+
+1. **Telegram bot token** - open BotFather, select the bot, use **Revoke current token**,
+   then update `TELEGRAM_BOT_TOKEN` in GitHub Actions secrets.
+2. **Pexels API key** - regenerate it in the Pexels dashboard, then update
+   `PEXELS_API_KEY`.
+3. **DeepSeek / OpenAI API key** - revoke the key in the provider dashboard. The pipeline
+   no longer uses a paid LLM; `GEMINI_API_KEY` is the optional free replacement.
+4. **Buffer API key** - regenerate it at <https://publish.buffer.com/settings/api> if it
+   was ever pasted into a commit, then update `BUFFER_API_KEY`.
+5. **Telegram chat id / Buffer organization and channel ids** - these identify an account
+   but do not authorize access. Treat them as private configuration anyway; they are now
+   supplied only through secrets.
+
+After rotating, update every GitHub Actions secret. This project did **not** force-push or
+rewrite history, because that requires a separate decision and coordination with anyone
+who cloned the repository. If you later choose a history rewrite, do it after rotating
+the keys; a rewrite alone does not make leaked keys safe.
+
+## 11. Troubleshooting
+
+| Symptom | Check |
 |---|---|
-| Закончились посты в Buffer (оранжевый Approvals) | Бесплатный план — 10 постов в неделю. После 50/week подождите неделю или купите платный Buffer |
-| API ключ DeepSeek перестал работать | Получите новый ключ на platform.deepseek.com или смените на OpenAI/другую модель в `pipeline.py` |
-| Actions не запустился по расписанию | Бывает у GitHub бесплатных планов (редко). Просто нажмите Run workflow вручную один раз |
-| Pexels не отдал видео | Pexels иногда банит IP, автоматически используется fallback — не обращайте внимания |
-| Все хосты для видео упали | Напишите мне, добавлю новый хост |
-| Закончилось место на GitHub Release | На бесплатном плане GitHub Releases не имеют лимита на количество ассетов, но периодически старые можно удалять |
+| `AUTH_ERROR` from Buffer | `BUFFER_API_KEY` secret is missing, revoked or copied with whitespace |
+| `Missing required field organizationId` | The pipeline must send the org id inside `--json`; do not mix `--json` with `--organization-id` |
+| Buffer media URL error | Set `PUBLIC_MEDIA_BASE_URL` to a direct `video/mp4` host; GitHub Release URLs redirect and are served as octet-stream |
+| Post status `needs_approval` or `draft` | Buffer approval workflow is enabled or `save-to-draft` was used; the pipeline treats this as a failed slot |
+| Queue full / 10 scheduled posts | Wait for posts to publish, or reduce `max_posts`; Buffer Free is a queue, not a monthly quota |
+| MPT render failed | Check the Actions log for the failed stage; Pexels or Edge TTS outages are retried on the next recovery run |
+| Scheduled run started hours late | Expected on GitHub-hosted cron. The primary batch is placed early enough for an 8-hour delay; a slot that already passed cannot be backfilled |
+| Workflow shows as disabled | GitHub disables schedules after 60 days without repository activity. Click **Enable workflow**; `Keepalive` normally prevents this |
+| Need a one-off Buffer diagnosis | Run `buffer doctor` in the Actions log or in a private terminal; it never prints the key |
+| No Telegram message | Empty runs intentionally send nothing. Check that both Telegram secrets are set for failures |
+| Release upload 403 | The workflow needs `contents: write`; check the repository Actions permissions |
 
-## 🔑 Важные ссылки (сохраните)
+## 12. Local checks that are safe
 
-- Репозиторий: https://github.com/darlahunter1-netizen/dateflow-pipeline
-- Actions (запуски): https://github.com/darlahunter1-netizen/dateflow-pipeline/actions
-- Buffer (очередь): https://publish.buffer.com
-- Instagram: https://instagram.com/dataflow_planner
-- DateFlow бот: t.me/DateFlow_Planner_bot
-- DateFlow приложение: https://dateflow-tau.vercel.app/
+These commands do not publish and do not need production secrets:
 
-## 📈 План по росту (ближайшие недели)
+```bash
+python -m py_compile pipeline.py
+bash -n setup_buffer.sh
+python -m unittest discover -s tests -v
+python pipeline.py --mode dry_run --offline --no-llm --max-posts 1
+```
 
-1. **Неделя 1-2**: 4 поста в день только на английском, стабильный выход по расписанию → 200-1000 подписчиков
-2. **Неделя 3**: Добавим турецкие Reels (половина турецких, половина английских) — турецкая аудитория в Стамбуле взрывает охват
-3. **Неделя 4**: Определим вирусные темы (какие Reels набрали больше просмотров) и будем делать больше такого контента
-4. **Далее**: Добавим трендовые BGM, пин-комменты, Stories-опросы, CTA на подписку в каждом видео
+Do not use a local run as the production path. The supported production path is the
+GitHub Actions workflow.
 
-Если видите что в какой-то день Reels не вышли или в Telegram ошибка — скиньте скриншот лога, я поправлю. В остальном — всё должно работать на автопилоте 🚀
+## 13. Files and schedule reference
+
+| File | Purpose |
+|---|---|
+| `pipeline.py` | Planner, scripts, MPT render, release upload, Buffer scheduling |
+| `.github/workflows/daily-reel.yml` | Production schedule and manual inputs |
+| `.github/workflows/tests.yml` | Offline tests and syntax checks |
+| `.github/workflows/keepalive.yml` | Monthly heartbeat commit so GitHub keeps the schedule enabled |
+| `setup_buffer.sh` | Preflight; the API key is read from the environment only |
+| `tests/test_pipeline.py` | Offline unit tests |
+
+Posting slots are **11:00, 15:00, 18:15 and 21:30 TRT** (08:00, 12:00, 15:15 and 18:30 UTC).

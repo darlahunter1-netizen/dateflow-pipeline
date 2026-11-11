@@ -1,73 +1,202 @@
-name: DateFlow Reels (just-in-time)
+name: DateFlow Reels
+
+# Production runs only in GitHub Actions.
+#
+# GitHub's scheduler can start a job minutes or hours late. Audit of this
+# repository on 2026-11-10/11 showed 5-8 hour delays, so the old four
+# just-in-time runs missed slots. The primary batch below runs late in the TRT
+# evening and schedules the next TRT day in advance. Two recovery runs only
+# fill slots that are still in the future and not already in Buffer.
+#
+# TRT is UTC+3 all year (Turkey has no DST).
 on:
   schedule:
-    # За 25 минут до каждого слота (TRT = UTC+3):
-    # 11:00 TRT = 08:00 UTC → запуск 07:35
-    - cron: '35 7 * * *'
-    # 15:00 TRT = 12:00 UTC → запуск 11:35
-    - cron: '35 11 * * *'
-    # 18:15 TRT = 15:15 UTC → запуск 14:50
-    - cron: '50 14 * * *'
-    # 21:30 TRT = 18:30 UTC → запуск 18:05
-    - cron: '5 18 * * *'
+    # 20:10 UTC = 23:10 TRT. Primary batch: schedule tomorrow's four slots.
+    - cron: '10 20 * * *'
+    # 02:10 UTC = 05:10 TRT. Recovery before the 11:00 TRT slot.
+    - cron: '10 2 * * *'
+    # 08:10 UTC = 11:10 TRT. Recovery for later slots only; 11:00 cannot be
+    # backfilled if it has already passed.
+    - cron: '10 8 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dry_run validates everything without publishing; production creates real posts.'
+        type: choice
+        options:
+          - dry_run
+          - production
+        default: dry_run
+      confirm:
+        description: 'Type PUBLISH to confirm a production run. Ignored by dry_run.'
+        required: false
+        default: ''
+      date:
+        description: 'Optional TRT date YYYY-MM-DD for a manual catch-up (blank = auto).'
+        required: false
+        default: ''
+      max_posts:
+        description: 'Maximum posts for this manual run (1-4).'
+        required: false
+        default: '4'
 
 concurrency:
-  group: dateflow-reels-${{ github.ref }}
+  group: dateflow-reels
   cancel-in-progress: false
 
 permissions:
   contents: write
 
+env:
+  PYTHONUNBUFFERED: '1'
+  MPT_DIR: ${{ github.workspace }}/mpt
+  OUTPUT_DIR: ${{ github.workspace }}/output
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system deps
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve run mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+          INPUT_DATE: ${{ inputs.date }}
+          INPUT_MAX_POSTS: ${{ inputs.max_posts }}
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg fonts-dejavu curl git
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-          sudo npm install -g @bufferapp/cli
-      - name: Setup Python
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            MODE=production
+            CONFIRM=""
+            TARGET_DATE=""
+            MAX_POSTS=4
+          else
+            MODE="${INPUT_MODE:-dry_run}"
+            CONFIRM="${INPUT_CONFIRM:-}"
+            TARGET_DATE="${INPUT_DATE:-}"
+            MAX_POSTS="${INPUT_MAX_POSTS:-4}"
+          fi
+          case "$MAX_POSTS" in
+            1|2|3|4) ;;
+            *) echo "::error::max_posts must be 1-4"; exit 1 ;;
+          esac
+          if [ -n "$TARGET_DATE" ] && ! [[ "$TARGET_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::date must be empty or YYYY-MM-DD"
+            exit 1
+          fi
+          case "$CONFIRM" in
+            ""|"PUBLISH") ;;
+            *) echo "::error::confirm must be empty or PUBLISH"; exit 1 ;;
+          esac
+          if [ "$MODE" = "production" ] && [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$CONFIRM" != "PUBLISH" ]; then
+            echo "::error::Manual production requires confirm=PUBLISH. Use the default dry_run for a safe check."
+            exit 1
+          fi
+          {
+            echo "MODE=$MODE"
+            echo "CONFIRM=$CONFIRM"
+            echo "TARGET_DATE=$TARGET_DATE"
+            echo "MAX_POSTS=$MAX_POSTS"
+          } >> "$GITHUB_ENV"
+          echo "Resolved mode=$MODE max_posts=$MAX_POSTS"
+
+      - name: Check production secrets
+        if: github.event_name == 'schedule' || inputs.mode == 'production'
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in PEXELS_API_KEY BUFFER_API_KEY BUFFER_ORG_ID BUFFER_CHANNEL_ID; do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required GitHub Actions secrets:$missing"
+            exit 1
+          fi
+          echo "Required production secrets are present (values not printed)."
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Clone & install MoneyPrinterTurbo
+
+      - name: Install pipeline dependency
+        run: python -m pip install --quiet --disable-pip-version-check requests
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install official Buffer CLI
         run: |
-          cd $GITHUB_WORKSPACE/..
-          git clone --depth 1 https://github.com/harry0703/MoneyPrinterTurbo.git mpt
-          cd mpt
-          pip install -r requirements.txt --quiet
-          pip install edge-tts --quiet
-          mkdir -p resource/fonts
-          curl -sL -o resource/fonts/Anton-Regular.ttf "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
-      - name: Install pipeline deps
-        run: pip install requests openai edge-tts --quiet
-      - name: Setup Buffer CLI config
+          set -euo pipefail
+          npm install --global @bufferapp/cli@2.3.0 --no-audit --no-fund
+          buffer --version
+
+      - name: Install system dependencies
+        if: github.event_name == 'schedule' || inputs.mode == 'production'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+
+      - name: Cache pip downloads
+        if: github.event_name == 'schedule' || inputs.mode == 'production'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: dateflow-pip-mpt-v1.3.10
+
+      - name: Cache Whisper model
+        if: github.event_name == 'schedule' || inputs.mode == 'production'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: dateflow-whisper-base-v1
+
+      - name: Install MoneyPrinterTurbo v1.3.10
+        if: github.event_name == 'schedule' || inputs.mode == 'production'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v1.3.10 \
+            https://github.com/harry0703/MoneyPrinterTurbo.git "$MPT_DIR"
+          python -m pip install --quiet --disable-pip-version-check -r "$MPT_DIR/requirements.txt"
+          mkdir -p "$MPT_DIR/resource/fonts"
+          curl -fsSL -o "$MPT_DIR/resource/fonts/Anton-Regular.ttf" \
+            "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
+          test -f "$MPT_DIR/cli.py"
+
+      - name: Run pipeline
         env:
-          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
-        run: bash setup_buffer.sh
-      - name: Generate & publish Reel
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
-          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
-          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
-          MPT_DIR: ${{ github.workspace }}/../mpt
-          NUM_POSTS: '1'
+          PUBLIC_MEDIA_BASE_URL: ${{ vars.PUBLIC_MEDIA_BASE_URL }}
+          REPLACE_ERRORED_SLOTS: ${{ vars.REPLACE_ERRORED_SLOTS || '1' }}
+          BUFFER_MAX_QUEUE: '10'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python pipeline.py
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        run: python pipeline.py --mode "$MODE" --max-posts "$MAX_POSTS"
+
+      - name: Upload run artifacts
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: reel
+          name: dateflow-${{ github.run_id }}
           path: output/
-          retention-days: 3
+          if-no-files-found: ignore
+          retention-days: 7
