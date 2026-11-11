@@ -106,20 +106,6 @@ jobs:
 4. Выберите ✅ **Read and write permissions**
 5. Нажмите **Save**
 
-## Шаг 4: Проверить секреты
-Settings → Secrets and variables → Actions → Secrets. Должны быть ровно эти 7 секретов (проверьте названия — большими буквами, с подчёркиваниями):
-
-| Name | Value |
-|---|---|
-| `OPENAI_API_KEY` | `sk-3e4cb9080fea4d2b9c872aea51cc2ec4` |
-| `PEXELS_API_KEY` | `eaYdwAVy9MeKRY0okZClhbND6hkwAyXHcds0aXXn4ITCamkdGc4nkpdb` |
-| `BUFFER_API_KEY` | `HTR09W8Ubn_r5n6a9wDaYDPFCysHlqEIdYOORVzvtKJ` |
-| `BUFFER_ORG_ID` | `6ad678fa27469e130f893e13` |
-| `BUFFER_CHANNEL_ID` | `6adc7b9b778b240e2fac6af1` |
-| `TELEGRAM_BOT_TOKEN` | `8795932131:AAGvoGY6DuROOSe4hxE_71rofDOvu4iDJJ0` |
-| `ADMIN_CHAT_ID` | `7210384965` |
-
-Если какого-то нет — **New repository secret** и добавьте. Если опечатка в названии — удалите и создайте заново.
 
 ## Шаг 5: Отменить зависшие запуски
 1. Вкладка **Actions**
