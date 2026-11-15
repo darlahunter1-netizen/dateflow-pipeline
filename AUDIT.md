@@ -84,6 +84,37 @@ kind only.
 10. `keepalive.yml` writes one timestamp per month so GitHub does not disable the schedule
     after 60 days without repository activity.
 
+## Retention audit of the first published Reel (2026-11-12)
+
+Instagram analytics for the 18:15 Reel: 100% of viewers gone by the second second,
+around 15% left at 4s, and 0.0% likes, saves, reposts and comments. The file was
+downloaded from the public release and measured frame by frame.
+
+| Measurement | Value | Consequence |
+|---|---|---|
+| Opening frames | **0.63 s of pure black** (luma 0 on frames 0-18) | the first thing every viewer saw was a black screen |
+| Silence | 4 gaps of ~0.9 s, **4.31 s of 16.5 s = 26%** | the voiceover stalls four times in a 16 s video |
+| Clip length | 2.0 s to 3.13 s, five clips | slow for the format |
+| Subtitle position | y 36% from the top, across the subject | MPT's `two_thirds_bottom` is 1/3 from the top, not the bottom |
+| B-roll relevance | woman on a laptop with a baby, street guitarist, sunset, city road | none of it matches dating advice |
+| B-roll faces | backs of heads, no eye contact | no human connection on screen |
+
+Root causes in the code, not in the content:
+
+1. `--video-transition-mode shuffle` picks `FadeIn`/`FadeOut` roughly one time in three
+   (`video.py`: `random.choice(transition_funcs)`), and a fade means near-black frames.
+2. `two_thirds_bottom` computes `y = (video_height - clip.h) / 3.0`, i.e. the upper
+   third.
+3. Every sentence break becomes an Edge TTS gap, and the scripts had five sentences.
+4. Pexels terms came from the model and drifted toward generic stock scenes.
+
+Fixes shipped in this commit: hard cuts, `custom` position at 62%, 84 px text,
+2 s clips, at most 4 sentence breaks per script, a required copyable element in the
+body, and a post-render gate that rejects a black opening or a gap over 1.2 s.
+
+Verified against the real file: the new gate measures `black_lead=0.23s`,
+`silence_total=4.31s` and rejects it, which is the correct outcome.
+
 ## Verified locally
 
 * `pipeline.py` compiles; 55 unit tests pass; shell syntax passes; YAML parses.

@@ -87,10 +87,19 @@ workflow:
 
 * **1080x1920, 9:16** output (`--video-aspect 9:16`, MPT `VideoAspect.portrait`).
 * **Word-by-word animated subtitles**: `--subtitle-display-mode word_by_word`,
-  `--subtitle-animation pop_spring`, Anton font, 78 px, white text, black stroke.
+  `--subtitle-animation pop_spring`, Anton font, **84 px**, white text, black stroke.
+* **Subtitle position `custom` at 62%**. MPT's `two_thirds_bottom` is a misnomer: it
+  places text 1/3 from the **top** (`y = (height - clip.h) / 3`), which put the words
+  across the subject in the first real render. `custom` puts them in the lower third,
+  clear of the Instagram caption and buttons.
 * **Pexels b-roll**: `--video-source pexels` and per-script search terms.
-* **Transitions**: MPT `Shuffle`, which includes fade, slide and zoom transitions.
-  `--video-fit-mode cover` fills the vertical canvas.
+* **Transitions: none.** MPT's `Shuffle` picks `FadeIn`/`FadeOut` about one time in
+  three, and a fade renders the first ~0.6 s of the clip as pure black. The first real
+  Reel opened on **0.63 s of black** - measured - which is what a viewer sees before
+  deciding to scroll. Hard cuts also suit the format better.
+* **Clip length 2 s** instead of 3 s, so a 15 s Reel has roughly eight visual changes
+  instead of five.
+* `--video-fit-mode cover` fills the vertical canvas.
 * **Zoom / Ken Burns**: MPT applies smooth per-frame Ken Burns zoom to image materials
   (`--image-motion zoom`). Pexels clips are video, not images, so they receive MPT's zoom
   transitions instead of a per-clip Ken Burns animation.
@@ -98,6 +107,16 @@ workflow:
 
 The pipeline runs `ffprobe` after rendering and fails the slot if the file is not
 1080x1920, H.264 with an AAC audio track, or outside 8-90 seconds.
+
+It then measures the rendered file itself, not the plan, and fails the slot when:
+
+* the video opens with more than **0.15 s of black frames** (luma scan of the first
+  1.5 s; `blackdetect` is not used because a fade produces near-black frames that its
+  pixel threshold misses, which is exactly the case that shipped),
+* any single **dead-air gap exceeds 1.2 s**.
+
+Total silence above 30% of the runtime is logged as a warning, because that usually
+means the script was too long rather than the render being broken.
 
 ## Script generation: free, with a reviewed fallback
 
@@ -115,6 +134,13 @@ The pipeline runs `ffprobe` after rendering and fails the slot if the file is no
 * **Language:** English only. A Turkish mix is not enabled.
 * **Quality rules:** a hook in the first 1-2 seconds, a concrete tension or unexpected
   claim, one practical tip, a payoff, and a short low-pressure CTA.
+* **Built to be saved:** the body must contain one copyable element - a line the viewer
+  could send word for word in quotes, a specific number, or an explicit "instead of X,
+  do Y". Pure encouragement gets scrolled; something copyable gets saved and shared.
+  Validation rejects a script without one.
+* **Fewer sentences on purpose:** every full stop makes Edge TTS insert roughly a
+  0.9 s gap. The first real Reel had four such gaps, 4.3 s of dead air in a 16.5 s
+  video. Scripts are capped at 4 sentence breaks in total.
 * **Safety:** coercion, pressure, jealousy games, negging, persistence after a no and
   alcohol-based manipulation are rejected by validation. Consent and respect are required.
 * **No repetition:** hooks from Buffer's recent history and the current queue are passed

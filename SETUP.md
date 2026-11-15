@@ -142,12 +142,14 @@ For each free future slot:
 1. Generates or selects a script.
 2. Renders with MoneyPrinterTurbo v1.3.10 at 1080x1920 / 9:16.
 3. Runs `ffprobe` and rejects a wrong size, codec, missing audio or duration.
-4. Uploads to the public GitHub Release.
-5. Verifies the media URL and MP4 bytes.
-6. Validates the Buffer payload locally with `--dry-run`.
-7. Checks the slot again for occupancy.
-8. Creates the post with the official Buffer CLI.
-9. Reads the post back and requires status `scheduled` (or `buffer`).
+4. Measures the rendered file: rejects an opening with more than 0.15 s of black and
+   any dead-air gap longer than 1.2 s, and warns when silence is over 30% of the runtime.
+5. Uploads to the public GitHub Release.
+6. Verifies the media URL and MP4 bytes.
+7. Validates the Buffer payload locally with `--dry-run`.
+8. Checks the slot again for occupancy.
+9. Creates the post with the official Buffer CLI.
+10. Reads the post back and requires status `scheduled` (or `buffer`).
 
 At the end it sends **one** Telegram summary if Telegram is configured. A run with no free
 slots sends nothing. A real failure sends one error summary and exits non-zero so the
@@ -203,6 +205,9 @@ the keys; a rewrite alone does not make leaked keys safe.
 | Post status `needs_approval` or `draft` | Buffer approval workflow is enabled or `save-to-draft` was used; the pipeline treats this as a failed slot |
 | Queue full / 10 scheduled posts | Wait for posts to publish, or reduce `max_posts`; Buffer Free is a queue, not a monthly quota |
 | MPT render failed | Check the Actions log for the failed stage; Pexels or Edge TTS outages are retried on the next recovery run |
+| `opens with ...s of black frames` | The transition mode regressed to a fade. It must stay `none`; MPT `Shuffle` picks FadeIn/FadeOut at random |
+| `dead-air gap` | The script had too many sentences, so Edge TTS inserted pauses. Check the sentence-break cap |
+| Subtitles across the subject | `subtitle_position` must be `custom` with `custom_position = 62`; `two_thirds_bottom` means one third from the top in MPT |
 | Scheduled run started hours late | Expected on GitHub-hosted cron. The primary batch is placed early enough for an 8-hour delay; a slot that already passed cannot be backfilled |
 | Workflow shows as disabled | GitHub disables schedules after 60 days without repository activity. Click **Enable workflow**; `Keepalive` normally prevents this |
 | Need a one-off Buffer diagnosis | Run `buffer doctor` in the Actions log or in a private terminal; it never prints the key |

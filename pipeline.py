@@ -102,8 +102,19 @@ RELEASE_PREFIX = "dateflow-media"
 RELEASE_NAME = "DateFlow Reels Media"
 DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_LLM_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
-TRANSITION_MODE = "shuffle"  # MPT's Shuffle includes fade/slide/zoom transitions.
-SUBTITLE_POSITION = "two_thirds_bottom"
+# MPT's Shuffle picks FadeIn/FadeOut 1 time in 3, and a fade renders the first
+# ~0.6s of the clip as pure black. Measured on a real render: frames 0-18 were
+# black, which is what viewers see first. "none" gives clean hard cuts.
+TRANSITION_MODE = "none"
+# MPT's "two_thirds_bottom" actually places the text 1/3 from the TOP
+# (video.py: y = (height - clip.h) / 3). A real render showed subtitles across
+# the subject's back. "custom" with 62 puts them in the lower third where the
+# Instagram UI does not cover them.
+SUBTITLE_POSITION = "custom"
+CUSTOM_POSITION = 62.0
+FONT_SIZE = 84
+VOICE_RATE = 1.22
+CLIP_DURATION = 2
 
 
 # ── Errors and config ───────────────────────────────────────────────────────
@@ -623,6 +634,8 @@ TOPICS = (
     "repairing a small mistake on a date",
 )
 
+MAX_SENTENCE_MARKS = 4
+
 UNSAFE_PATTERNS = re.compile(
     r"\b("
     r"ignore (her|his|their|the) no|don'?t take no|pressure (her|him|them)|"
@@ -643,100 +656,100 @@ BAD_STYLE_PATTERNS = re.compile(
 # returns invalid JSON. Every entry contains hook/body/cta/terms.
 FALLBACK_SCRIPTS: tuple[dict[str, str], ...] = (
     {
-        "hook": "The best first date is shorter than you think",
-        "body": "Plan one hour, not five. Coffee, then a walk if it is going well. A short date protects both calendars and makes the next one something you both want. Ending on a high note beats forcing a marathon.",
-        "cta": "DateFlow builds the route in minutes.",
-        "terms": "couple coffee shop window, couple walking city street, first date coffee, urban park bench couple, evening city walk",
+        "hook": "Stop asking how their day was",
+        "body": 'That question gives them nothing to answer. Try: "What was the most annoying part of your day?" It is easy to answer, and it tells you how they handle frustration.',
+        "cta": "Save this for your next text.",
+        "terms": "person texting phone, couple cafe talking, woman smiling phone, coffee table hands",
     },
     {
-        "hook": "Stop asking what do you do for work",
-        "body": "That question turns a date into an interview. Ask what they have been into lately, then follow the answer with a real follow-up. People remember how curious you made them feel, not your list of questions.",
-        "cta": "One good route. Zero awkward silences.",
-        "terms": "couple talking cafe close up, active listening date, couple laughing conversation, coffee date hands, city cafe window couple",
+        "hook": "The 20 minute first date rule",
+        "body": "Book 20 minutes instead of two hours. If it is going well you extend it, and if it is not you both leave with the evening intact. Long first dates are usually politeness, not chemistry.",
+        "cta": "Comment your longest first date.",
+        "terms": "coffee shop couple, two coffee cups, couple leaving cafe, city street evening",
     },
     {
-        "hook": "Consent is not a mood killer",
-        "body": "Check in before you close the distance. A simple is this okay, said warmly, shows you are paying attention. Enthusiastic yes is the only green light. A pause or a no deserves a smile and a step back.",
-        "cta": "Better dates start with respect.",
-        "terms": "couple respectful conversation, couple eye contact close, romantic couple talking sofa, gentle couple moment, honest conversation date",
+        "hook": "One question that fixes small talk",
+        "body": "Ask one question: what are you looking forward to this week? It takes 10 seconds, and it gives you something real to follow up on later instead of swapping job titles.",
+        "cta": "Save this before your next date.",
+        "terms": "couple talking cafe, two people laughing, couple walking park, warm window light",
     },
     {
-        "hook": "Your date does not owe you a second one",
-        "body": "If they say no, thank them and mean it. Do not negotiate, sulk, or ask why. A graceful exit protects your reputation and leaves the door open for a genuine yes with someone else.",
-        "cta": "DateFlow plans the next good one.",
-        "terms": "person walking away city, confident person smiling alone, cafe exit daylight, calm person street, sunrise city solo",
+        "hook": "Text this instead of hey",
+        "body": 'Try: "I walked past a place today that you would like." It gives them something to react to, and it proves you paid attention to what they said last week.',
+        "cta": "Comment the last text you sent.",
+        "terms": "hands holding phone, person typing message, couple reading phone, city street walk",
     },
     {
-        "hook": "The cheapest date can be the most memorable",
-        "body": "Skip the expensive dinner. Pick a market, split something you have never tried, and walk it off. Novelty does the work that money usually gets blamed for. You leave with a story instead of a bill.",
-        "cta": "We map low-key spots that feel special.",
-        "terms": "street food market couple, couple sharing food, city market walk, sunset bridge couple, casual date walking",
+        "hook": "Nobody gets rejected for being clear",
+        "body": "Say it in 1 sentence: I am looking for something serious, slowly. Vague answers feel safer, but they attract people who are being just as vague back.",
+        "cta": "Comment if this is hard for you.",
+        "terms": "two people talking table, couple serious conversation, evening restaurant, faces close",
     },
     {
-        "hook": "Do not text back just to win",
-        "body": "Waiting three hours to look busy is a game nobody enjoys. Reply when you see it, say something specific, and make a plan. Calm consistency is more attractive than a perfectly timed message.",
-        "cta": "Less games. More good dates.",
-        "terms": "person texting phone cafe, phone screen message close, couple texting smiling, morning coffee phone, city bench phone",
+        "hook": "The second date mistake everyone makes",
+        "body": "Do not repeat the first date. Pick one thing you both missed and do only that for 90 minutes. Novelty makes it feel like progress, and repetition makes it feel like an interview.",
+        "cta": "Save this and plan properly.",
+        "terms": "couple museum, couple walking bridge, small bar couple, people laughing night",
     },
     {
-        "hook": "Planning everything is not romantic",
-        "body": "Offer two good options and let them choose. You show initiative without taking over. The date feels like something you built together, not a schedule they were handed. It also makes the next decision easier.",
-        "cta": "Two options, one great night.",
-        "terms": "couple choosing menu, couple planning map, two coffee cups table, couple decision smiling, notebook cafe couple",
+        "hook": "Ask this on every first date",
+        "body": 'Ask: "What does a good week look like for you?" The answer shows their rhythm, their friends, their sleep and their priorities, which is more useful than a list of hobbies.',
+        "cta": "Send this to your single friend.",
+        "terms": "couple talking window, two people coffee, morning light couple, cafe table hands",
     },
     {
-        "hook": "Listen longer than feels comfortable",
-        "body": "Most people fill silence with another question. Instead, repeat the last thing they said and ask what happened next. Being heard is rarer than being impressive, and it costs nothing.",
-        "cta": "DateFlow handles the plan. You handle the presence.",
-        "terms": "couple listening close, woman talking man listening, cafe conversation warm, couple eye contact table, quiet restaurant couple",
+        "hook": "Stop apologizing for your schedule",
+        "body": 'Say this instead: "I have Tuesday at seven free and I would like to see you." A clear offer reads as confidence, and people match the energy they are given.',
+        "cta": "Save this before you reply.",
+        "terms": "person checking calendar, couple meeting street, evening city couple, phone calendar close",
     },
     {
-        "hook": "Your profile does not need ten photos",
-        "body": "Three clear photos beat a highlight reel. One face, one full body, one thing you actually do. Write two specific lines about how you spend a free Saturday. Specific is believable; vague is forgettable.",
-        "cta": "Build the profile, then build the date.",
-        "terms": "person taking selfie window, phone profile close up, city weekend hobby, casual portrait street, coffee and book table",
+        "hook": "You are not bad at dating",
+        "body": "You are picking the wrong format. Loud bars hide conversation and dinners force it. Choose an activity where you do two things at once, so silence has somewhere to go instead of becoming awkward.",
+        "cta": "Save this list of formats.",
+        "terms": "couple arcade games, couple bowling alley, couple at market, friends laughing bar",
     },
     {
-        "hook": "A second date should be even shorter",
-        "body": "Pick one thing you both missed the first time. Ninety minutes, no pressure, an easy goodbye. The goal is not to exhaust the conversation. It is to leave enough for a third.",
-        "cta": "DateFlow keeps the next plan easy.",
-        "terms": "couple dessert cafe, short walk evening couple, couple saying goodbye doorway, small bar couple, city lights couple",
+        "hook": "This opener gets an actual reply",
+        "body": 'Reference one thing from their profile: "Your Lisbon photo looks like it was taken at 6am." Specific beats clever, because it proves you actually looked instead of copy pasting.',
+        "cta": "Save this and try it once.",
+        "terms": "phone screen app, hands holding phone, person smiling phone, cafe light phone",
     },
     {
-        "hook": "Nerves are not a red flag",
-        "body": "A shaking hand can mean someone cares. Judge how they treat the waiter, whether they listen, and how they respond to a boundary. Calm is nice; respect is the signal.",
-        "cta": "Choose people who make respect feel normal.",
-        "terms": "couple nervous smile, hands fidgeting cafe, couple polite waiter, calm couple talking, first date table",
+        "hook": "End the date while it is still good",
+        "body": "Leave 15 minutes before you run out of things to say. The last feeling they have is wanting more, and that feeling is what turns a nice evening into a second date.",
+        "cta": "Comment if you always stay too long.",
+        "terms": "couple leaving restaurant, goodbye hug street, evening taxi window, couple walking home",
     },
     {
-        "hook": "The 24-hour text rule is bad advice",
-        "body": "Message when you get home if you had a good time. Mention one specific moment. No essay, no scorekeeping. Honest enthusiasm filters for people who want the same thing.",
-        "cta": "Say what you mean. Then plan the next one.",
-        "terms": "person texting evening window, phone glow face, couple text smile, city night phone, cozy room texting",
+        "hook": "Never ask do you want to grab coffee",
+        "body": 'Offer a time and a place: "Thursday, 6:30, the place with the awful neon sign." Decisions are tiring, and removing one small decision makes yes much easier.',
+        "cta": "Save this before you text.",
+        "terms": "neon sign coffee shop, two cups table, cafe exterior evening, couple entering cafe",
     },
     {
-        "hook": "Do not plan a date around getting drunk",
-        "body": "Alcohol can hide a bad fit, not fix one. Pick a place with good non-alcoholic options and keep the first round slow. You want to remember the person, not the tab.",
-        "cta": "Plan a date you will both remember.",
-        "terms": "mocktail bar couple, couple toast drinks, bartender alcohol free, cafe evening couple, sober date conversation",
+        "hook": "The three date rule is backwards",
+        "body": "Do not wait 3 dates to say what you want. Say it on the first one, lightly. You lose the people who were never ready, and that is the entire point.",
+        "cta": "Send this to someone who needs it.",
+        "terms": "couple honest talk, two people talking close, candid faces portrait, window evening",
     },
     {
-        "hook": "Ask before you touch",
-        "body": "A hand on the back can be welcome or invasive. Ask, or move slowly and watch for a clear yes. Small check-ins build trust and make real chemistry easier to notice.",
-        "cta": "Respect is the baseline, not the bonus.",
-        "terms": "couple holding hands, couple close conversation, gentle touch shoulder, respectful couple walk, warm couple portrait",
+        "hook": "Your first message is too long",
+        "body": "Keep it to 2 sentences and 1 question. Long openers look like effort but read like pressure, because they force the other person to match your energy before they even know you.",
+        "cta": "Save this for your next match.",
+        "terms": "person typing phone, phone glow face, hands phone table, night phone light",
+    },
+    {
+        "hook": "Compliment the choice not the face",
+        "body": "Say you like the way they picked that bar instead of the obvious one, or how they talk about their sister. Compliments about choices are rare, specific, and people remember them for days.",
+        "cta": "Comment the best compliment you got.",
+        "terms": "couple talking table, couple laughing close, friends conversation, warm restaurant",
     },
     {
         "hook": "A busy schedule is not a status symbol",
-        "body": "If you want to meet, offer a real window. Maybe Tuesday at seven. Vague maybe later reads as lukewarm. Clear plans respect their time and yours.",
-        "cta": "Pick a time. We will pick the place.",
-        "terms": "calendar planner coffee, couple scheduling phone, city cafe table, person writing planner, clock window cafe",
-    },
-    {
-        "hook": "The best apology on a date is a small one",
-        "body": "If you are late, say sorry once, then change the subject and be present. Over-explaining makes the date about your guilt. Repair quickly, then get back to the person in front of you.",
-        "cta": "Good dates leave room to be human.",
-        "terms": "person arriving cafe late, couple greeting table, watch wrist coffee, couple relaxed talk, city door cafe",
+        "body": 'If you want to meet, offer a real window: "Tuesday at seven." Vague maybe later reads as lukewarm, and people stop chasing the person who never commits to a time.',
+        "cta": "Save this and answer properly.",
+        "terms": "person calendar phone, couple meeting city, evening street couple, clock on wall",
     },
 )
 
@@ -828,6 +841,21 @@ def validate_script(script: dict[str, Any], avoid_hooks: Iterable[str] = ()) -> 
     if hook_is_similar(s["hook"], avoid_hooks):
         return False, "hook is too similar to an existing hook"
 
+    # Every full stop makes Edge TTS insert a gap. A measured Reel had four
+    # ~0.9s gaps in 16.5s, which is 22% dead air. Cap the sentence count.
+    marks = len(re.findall(r"[.!?]", joined))
+    if marks > MAX_SENTENCE_MARKS:
+        return False, f"script has {marks} sentence breaks; keep it to {MAX_SENTENCE_MARKS} or fewer so the voiceover does not stall"
+
+    # Generic advice gets no saves and no shares. Require one concrete,
+    # copyable element: a quoted line, a number, or an explicit contrast.
+    if not (
+        re.search(r"['\"\u201c\u201d][^'\"\u201c\u201d]{4,}['\"\u201c\u201d]", s["body"])
+        or re.search(r"\d", s["body"])
+        or "instead" in s["body"].lower()
+    ):
+        return False, "body needs one concrete element: a quoted line, a number or an explicit instead"
+
     terms = [part.strip() for part in s["terms"].split(",") if part.strip()]
     if not 3 <= len(terms) <= 6:
         return False, "terms must contain 3-6 comma-separated phrases"
@@ -857,15 +885,20 @@ def generate_script_llm(cfg: Config, avoid_hooks: Iterable[str]) -> Optional[dic
         "manipulation, pressure, coercion, jealousy games, negging, persistence after a no, "
         "or getting someone drunk. Consent and respect are non-negotiable. No gendered "
         "stereotypes, no guarantees, no medical or legal claims.\n\n"
-        "Write ONE 18-24 second Reel script in US English with this structure:\n"
+        "Write ONE Reel script that people SAVE and SEND to a friend. Advice that is only "
+        "pleasant gets scrolled. To be saved, the script must contain one thing the viewer "
+        "can copy, quote or try tonight.\n\n"
+        "Structure, in US English:\n"
         "- hook: 3-10 words, a concrete tension or unexpected claim that lands in the first "
-        "1-2 seconds. Avoid question cliches and 'here is why'.\n"
-        "- body: 22-55 words, 2-3 short sentences, ONE practical tip with a specific example, "
-        "then a small payoff or reframe.\n"
-        "- cta: 3-10 words, low-pressure, about planning a better date with DateFlow. No "
-        "download-now pressure.\n"
-        "- terms: 3-6 comma-free Pexels search phrases (2-4 words each), portrait-friendly, "
-        "no brand names, no text overlays.\n\n"
+        "1-2 seconds. No question cliches, no 'here is why', no 'in this video'.\n"
+        "- body: 25-50 words, at most 3 sentences. It MUST contain one concrete element: a "
+        "line they could send word for word in double quotes, or a specific number, or an "
+        "explicit 'instead of X, do Y'. Name the situation, not the principle.\n"
+        "- cta: 3-10 words that asks for a save, a comment or a send. Never 'download now'.\n"
+        "- terms: 3-6 comma-free Pexels search phrases, 2-4 words each, describing a "
+        "specific visual scene with people. No brand names, no text overlays.\n\n"
+        "Every period makes the voiceover pause, so use fewer, longer sentences. Never use "
+        "more than 4 sentence breaks in total.\n\n"
         "Return ONLY a JSON object with exactly these keys: hook, body, cta, terms (terms as "
         "one comma-separated string). No markdown, no emojis, no hashtags, no URLs."
     )
@@ -1059,6 +1092,7 @@ subtitle_enabled = true
 subtitle_display_mode = "word_by_word"
 subtitle_animation = "pop_spring"
 subtitle_position = "{SUBTITLE_POSITION}"
+custom_position = {CUSTOM_POSITION}
 font_name = "Anton-Regular.ttf"
 font_size = 78
 text_fore_color = "#FFFFFF"
@@ -1127,13 +1161,13 @@ def _ffprobe_info(path: Path) -> Optional[dict[str, Any]]:
     }
 
 
-def verify_video(path: Path) -> None:
+def verify_video(path: Path) -> Optional[dict[str, Any]]:
     if not path.exists() or path.stat().st_size < 500_000:
         raise RenderError("rendered video is missing or suspiciously small")
     info = _ffprobe_info(path)
     if info is None:
         print("  warning: ffprobe is unavailable; skipping the 1080x1920 check")
-        return
+        return None
     if (info["width"], info["height"]) != (1080, 1920):
         raise RenderError(f"rendered video is {info['width']}x{info['height']}, expected 1080x1920")
     if info["codec"] not in {"h264", "avc1"}:
@@ -1144,14 +1178,103 @@ def verify_video(path: Path) -> None:
         )
     if not MIN_RENDER_SECONDS <= info["duration"] <= MAX_RENDER_SECONDS:
         raise RenderError(f"rendered video duration is {info['duration']:.1f}s, outside the allowed range")
+    return info
+
+
+def measure_render_quality(path: Path) -> dict[str, Any]:
+    """Measure the two defects that showed up in real Instagram analytics.
+
+    A real Reel was 16.5s with 0.63s of pure black at the start and four
+    digital-silence gaps of ~0.9s (22% of the runtime). Both are visible to
+    viewers and both are avoidable. This reads the rendered file, not the
+    plan, so a regression cannot slip through.
+
+    A luma scan is used instead of ffmpeg's blackdetect: a fade-from-black
+    produces near-black frames that blackdetect's pixel threshold misses,
+    which is exactly the case that broke the first real Reel.
+    """
+    if not shutil.which("ffmpeg"):
+        return {}
+    width, height = 32, 57
+    frame_bytes = width * height
+    probe = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-v", "error", "-t", "1.5",
+            "-i", str(path),
+            "-vf", f"scale={width}:{height},format=gray",
+            "-f", "rawvideo", "-",
+        ],
+        capture_output=True, timeout=120, stdin=subprocess.DEVNULL,
+    )
+    raw = probe.stdout or b""
+    means = [
+        sum(raw[i:i + frame_bytes]) / frame_bytes
+        for i in range(0, max(0, len(raw) - frame_bytes + 1), frame_bytes)
+    ]
+    fps = max(1.0, len(means) / 1.5)
+    dark_run = 0
+    for value in means:
+        if value >= 20:
+            break
+        dark_run += 1
+    black_lead = round(dark_run / fps, 2)
+
+    silence = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-v", "info", "-i", str(path),
+            "-af", "silencedetect=noise=-45dB:d=0.35",
+            "-f", "null", "-",
+        ],
+        capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL,
+    )
+    gaps = [float(m) for m in re.findall(r"silence_duration:\s*([0-9.]+)", silence.stderr or "")]
+    return {
+        "black_lead": black_lead,
+        "silence_total": round(sum(gaps), 2),
+        "silence_longest": round(max(gaps) if gaps else 0.0, 2),
+    }
+
+
+def qa_render(path: Path, duration: float) -> None:
+    quality = measure_render_quality(path)
+    if not quality:
+        print("  warning: ffmpeg is unavailable; skipping the black-frame and dead-air checks")
+        return
+    print(
+        f"  qa: black_lead={quality['black_lead']}s "
+        f"silence_total={quality['silence_total']}s longest={quality['silence_longest']}s"
+    )
+    if quality["black_lead"] > 0.15:
+        raise RenderError(
+            f"rendered video opens with {quality['black_lead']}s of black frames; "
+            "a Reel that starts black loses most viewers in the first second"
+        )
+    if quality["silence_longest"] > 1.2:
+        raise RenderError(
+            f"rendered video has a {quality['silence_longest']}s dead-air gap; "
+            "this reads as a stall and kills retention"
+        )
+    if duration and quality["silence_total"] / duration > 0.30:
+        print(
+            f"  warning: {quality['silence_total']}s of {duration:.1f}s is silence "
+            f"({quality['silence_total'] / duration:.0%}); shorten the script if this repeats"
+        )
 
 
 def render_with_mpt(cfg: Config, script: dict[str, str]) -> Path:
     ensure_mpt_config(cfg)
     task_id = str(uuid.uuid4())
+    transition_args: list[str] = []
+    if TRANSITION_MODE != "none":
+        # MPT's argparse maps "none" to the Python value None, and its CLI then
+        # skips any argument whose value is None. Passing "none" is therefore a
+        # no-op that only works because VideoParams also defaults to None. Omit
+        # the flag outright instead of relying on that.
+        transition_args = ["--video-transition-mode", TRANSITION_MODE]
     command = [
         sys.executable,
         "cli.py",
+        *transition_args,
         "--video-script",
         full_script_text(script),
         "--video-terms",
@@ -1166,14 +1289,12 @@ def render_with_mpt(cfg: Config, script: dict[str, str]) -> Path:
         "cover",
         "--image-motion",
         "zoom",
-        "--video-transition-mode",
-        TRANSITION_MODE,
         "--video-clip-duration",
-        "3",
+        str(CLIP_DURATION),
         "--voice-name",
         "en-US-GuyNeural",
         "--voice-rate",
-        "1.1",
+        str(VOICE_RATE),
         "--subtitle-enabled",
         "--subtitle-display-mode",
         "word_by_word",
@@ -1181,10 +1302,12 @@ def render_with_mpt(cfg: Config, script: dict[str, str]) -> Path:
         "pop_spring",
         "--subtitle-position",
         SUBTITLE_POSITION,
+        "--custom-position",
+        str(CUSTOM_POSITION),
         "--font-name",
         "Anton-Regular.ttf",
         "--font-size",
-        "78",
+        str(FONT_SIZE),
         "--text-fore-color",
         "#FFFFFF",
         "--stroke-color",
@@ -1244,7 +1367,8 @@ def render_with_mpt(cfg: Config, script: dict[str, str]) -> Path:
             video_path = candidate
     if not video_path.exists():
         raise RenderError("MoneyPrinterTurbo reported a video path that does not exist")
-    verify_video(video_path)
+    info = verify_video(video_path)
+    qa_render(video_path, float(info.get("duration") or 0) if info else 0.0)
     print(f"  render complete in {time.time() - started:.0f}s ({video_path.stat().st_size / 1_048_576:.1f} MB)")
     return video_path
 

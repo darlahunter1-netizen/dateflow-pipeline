@@ -194,6 +194,50 @@ class ScriptValidationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("markdown", reason)
 
+    def test_body_without_a_concrete_element_is_rejected(self):
+        # Same length and shape as a valid script, but pure abstract advice:
+        # nothing to copy, quote or try, so nothing to save.
+        generic = {
+            "hook": "Be yourself on a first date",
+            "body": (
+                "Honesty matters more than performance when you are meeting someone new, "
+                "and people notice almost immediately when you are trying too hard to "
+                "impress them on that first meeting of yours."
+            ),
+            "cta": "Save this for later.",
+            "terms": "couple cafe, two people talking, coffee cups table",
+        }
+        ok, reason = pipeline.validate_script(generic)
+        self.assertFalse(ok)
+        self.assertIn("concrete", reason)
+
+    def test_quoted_line_counts_as_concrete(self):
+        quoted = {
+            "hook": "Text this instead of hey",
+            "body": (
+                'Try: "I saw a place today you would like." It is short, it gives them '
+                "something real to answer, and it quietly proves you actually remembered what they told you last time."
+            ),
+            "cta": "Save this for later.",
+            "terms": "hands holding phone, person typing, cafe light",
+        }
+        ok, reason = pipeline.validate_script(quoted)
+        self.assertTrue(ok, reason)
+
+    def test_too_many_sentences_is_rejected(self):
+        chatty = {
+            "hook": "Say what you actually want",
+            "body": (
+                "Say it early. Say it clearly. Use exactly 1 sentence. Do not bury it "
+                "under a joke or a story. People respect a direct answer far more than a careful one, every time."
+            ),
+            "cta": "Save this.",
+            "terms": "couple talking, two people table, evening light",
+        }
+        ok, reason = pipeline.validate_script(chatty)
+        self.assertFalse(ok)
+        self.assertIn("sentence breaks", reason)
+
     def test_similar_hook_is_rejected(self):
         existing = [self.valid_script()["hook"]]
         script = self.valid_script()
@@ -295,6 +339,40 @@ class VideoGateTests(unittest.TestCase):
         with patch.object(pipeline, "_ffprobe_info", return_value=self.info(codec="vp9")):
             with self.assertRaises(pipeline.RenderError):
                 pipeline.verify_video(self.path)
+
+
+class RenderQualityTests(unittest.TestCase):
+    def test_missing_ffmpeg_is_not_fatal(self):
+        with patch.object(pipeline.shutil, "which", return_value=None):
+            self.assertEqual(pipeline.measure_render_quality(Path("/tmp/nope.mp4")), {})
+
+    def test_black_opening_is_rejected(self):
+        with patch.object(
+            pipeline,
+            "measure_render_quality",
+            return_value={"black_lead": 0.63, "silence_total": 0.0, "silence_longest": 0.0},
+        ):
+            with self.assertRaises(pipeline.RenderError) as ctx:
+                pipeline.qa_render(Path("/tmp/reel.mp4"), 16.5)
+            self.assertIn("black", str(ctx.exception))
+
+    def test_long_dead_air_is_rejected(self):
+        with patch.object(
+            pipeline,
+            "measure_render_quality",
+            return_value={"black_lead": 0.0, "silence_total": 4.3, "silence_longest": 1.5},
+        ):
+            with self.assertRaises(pipeline.RenderError) as ctx:
+                pipeline.qa_render(Path("/tmp/reel.mp4"), 16.5)
+            self.assertIn("dead-air", str(ctx.exception))
+
+    def test_clean_render_passes(self):
+        with patch.object(
+            pipeline,
+            "measure_render_quality",
+            return_value={"black_lead": 0.0, "silence_total": 0.8, "silence_longest": 0.4},
+        ):
+            pipeline.qa_render(Path("/tmp/reel.mp4"), 14.0)
 
 
 class ReleaseTagTests(unittest.TestCase):

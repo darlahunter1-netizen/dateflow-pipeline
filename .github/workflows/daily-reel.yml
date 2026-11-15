@@ -145,10 +145,34 @@ jobs:
 
       - name: Install system dependencies
         if: github.event_name == 'schedule' || inputs.mode == 'production'
+        # apt can stall on a slow mirror and hold the job for an hour.
+        # Cap the step, cap each apt call, and retry with a clean list.
+        timeout-minutes: 12
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          export DEBIAN_FRONTEND=noninteractive
+          APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 -o Acquire::ForceIPv4=true)
+          ok=0
+          for attempt in 1 2 3; do
+            echo "::group::apt attempt ${attempt}"
+            sudo rm -rf /var/lib/apt/lists/* || true
+            if timeout 240 sudo apt-get update -qq "${APT_OPTS[@]}" \
+               && timeout 240 sudo apt-get install -y -qq --no-install-recommends "${APT_OPTS[@]}" ffmpeg fonts-dejavu-core; then
+              ok=1
+              echo "::endgroup::"
+              break
+            fi
+            echo "::endgroup::"
+            echo "apt attempt ${attempt} failed; retrying in 10s"
+            sleep 10
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::apt failed after 3 attempts; the runner mirror is unhealthy, re-run the job"
+            exit 1
+          fi
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version | head -1
 
       - name: Cache pip downloads
         if: github.event_name == 'schedule' || inputs.mode == 'production'
