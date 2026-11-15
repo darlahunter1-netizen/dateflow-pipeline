@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import pathlib
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -373,6 +374,39 @@ class RenderQualityTests(unittest.TestCase):
             return_value={"black_lead": 0.0, "silence_total": 0.8, "silence_longest": 0.4},
         ):
             pipeline.qa_render(Path("/tmp/reel.mp4"), 14.0)
+
+
+class MptConfigTemplateTests(unittest.TestCase):
+    """The config.toml we generate must agree with the constants we pass on the CLI.
+
+    MPT 1.3.10 reads subtitle_position and custom_position from config.ui, and a
+    stale 78px font or a leftover "Shuffle" in that file is the kind of thing
+    that silently undoes a retention fix months later.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.mpt = self.tmp / "mpt"
+        self.mpt.mkdir()
+        (self.mpt / "cli.py").write_text("# stub\n", encoding="utf-8")
+
+    def generated_ui(self):
+        import tomllib
+
+        pipeline.ensure_mpt_config(pipeline.Config(pexels_key="x", mpt_dir=self.mpt))
+        return tomllib.loads((self.mpt / "config.toml").read_text(encoding="utf-8"))["ui"]
+
+    def test_font_size_matches_the_constant(self):
+        self.assertEqual(self.generated_ui()["font_size"], pipeline.FONT_SIZE)
+
+    def test_subtitle_position_matches_the_constant(self):
+        ui = self.generated_ui()
+        self.assertEqual(ui["subtitle_position"], pipeline.SUBTITLE_POSITION)
+        self.assertEqual(ui["custom_position"], pipeline.CUSTOM_POSITION)
+
+    def test_no_stale_transition_mode_is_written(self):
+        # MPT ignores this key, so writing "Shuffle" is both a lie and a trap.
+        self.assertNotIn("video_transition_mode", self.generated_ui())
 
 
 class ReleaseTagTests(unittest.TestCase):

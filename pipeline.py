@@ -1094,12 +1094,14 @@ subtitle_animation = "pop_spring"
 subtitle_position = "{SUBTITLE_POSITION}"
 custom_position = {CUSTOM_POSITION}
 font_name = "Anton-Regular.ttf"
-font_size = 78
+font_size = {FONT_SIZE}
 text_fore_color = "#FFFFFF"
 stroke_color = "#000000"
 stroke_width = 3.0
 subtitle_background_enabled = false
-video_transition_mode = "Shuffle"
+# Deliberately absent: MPT 1.3.10 does not read video_transition_mode from
+# config.ui (VideoParams hardcodes None), and its CLI drops a "none" value.
+# Writing "Shuffle" here would be a lie waiting for someone to trust it.
 video_fit_mode = "cover"
 bgm_type = "none"
 video_aspect_pexels = "9:16"
